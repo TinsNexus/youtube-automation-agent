@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>youtube-automation-agent — Fix list &amp; Electron plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#14181b;
+  --surface:#1b2126;
+  --surface-2:#212a30;
+  --rule:#2c353b;
+  --rule-soft:#232b31;
+  --text:#dce3e5;
+  --muted:#8a9ba1;
+  --dim:#66757b;
+  --p0:#ff6b4a;
+  --p1:#e8a33d;
+  --p2:#5ba8c9;
+  --p3:#7e8d94;
+  --ok:#6fbf8b;
+  --display:"Space Grotesk",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:var(--bg);color:var(--text);
+  font-family:var(--body);font-size:15px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:980px;margin:0 auto;padding:0 20px 120px}
+
+/* ---------- progress bar ---------- */
+.tracker{
+  position:sticky;top:0;z-index:50;
+  background:rgba(20,24,27,.94);backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--rule);
+  padding:10px 20px;
+}
+.tracker-inner{max-width:940px;margin:0 auto;display:flex;align-items:center;gap:14px}
+.tracker-label{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;white-space:nowrap}
+.tracker-bar{flex:1;height:4px;background:var(--rule);border-radius:2px;overflow:hidden}
+.tracker-fill{height:100%;width:0;background:var(--ok);transition:width .3s ease}
+.tracker-count{font-family:var(--mono);font-size:12px;color:var(--text);white-space:nowrap;font-variant-numeric:tabular-nums}
+
+/* ---------- header ---------- */
+header{padding:64px 0 40px;border-bottom:1px solid var(--rule)}
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--p2);margin:0 0 18px}
+h1{font-family:var(--display);font-size:clamp(30px,5.4vw,50px);line-height:1.05;font-weight:700;margin:0 0 18px;letter-spacing:-.02em}
+h1 em{font-style:normal;color:var(--muted)}
+.lede{font-size:16px;color:var(--muted);max-width:62ch;margin:0}
+.context{
+  margin-top:28px;display:flex;flex-wrap:wrap;gap:8px;
+}
+.chip{
+  font-family:var(--mono);font-size:11px;padding:5px 10px;
+  border:1px solid var(--rule);border-radius:3px;color:var(--muted);
+}
+.chip b{color:var(--text);font-weight:500}
+
+/* ---------- how to use ---------- */
+.howto{
+  margin:32px 0 0;padding:18px 20px;background:var(--surface);
+  border-left:2px solid var(--p2);border-radius:0 4px 4px 0;
+}
+.howto p{margin:0;font-size:14px;color:var(--muted)}
+.howto b{color:var(--text);font-weight:600}
+
+/* ---------- sections ---------- */
+section{padding-top:56px}
+.sec-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+.sec-tag{
+  font-family:var(--mono);font-size:12px;font-weight:600;
+  padding:3px 9px;border-radius:3px;letter-spacing:.06em;
+}
+.p0 .sec-tag{background:var(--p0);color:#1a0d08}
+.p1 .sec-tag{background:var(--p1);color:#1f1503}
+.p2 .sec-tag{background:var(--p2);color:#08181f}
+.p3 .sec-tag{background:var(--p3);color:#10171a}
+.el .sec-tag{background:var(--text);color:var(--bg)}
+h2{font-family:var(--display);font-size:26px;font-weight:600;margin:0;letter-spacing:-.01em}
+.sec-note{color:var(--dim);font-size:13.5px;margin:6px 0 26px;max-width:66ch}
+
+/* ---------- item ---------- */
+.item{
+  display:grid;grid-template-columns:22px 1fr;gap:14px;
+  padding:22px 0;border-top:1px solid var(--rule-soft);
+}
+.item:first-of-type{border-top:1px solid var(--rule)}
+.box{
+  appearance:none;-webkit-appearance:none;margin:4px 0 0;
+  width:17px;height:17px;border:1.5px solid var(--dim);border-radius:3px;
+  background:transparent;cursor:pointer;position:relative;flex:none;
+}
+.box:checked{border-color:var(--ok);background:var(--ok)}
+.box:checked::after{
+  content:"";position:absolute;left:5px;top:1px;width:4px;height:9px;
+  border:solid #10201a;border-width:0 2px 2px 0;transform:rotate(43deg);
+}
+.box:focus-visible{outline:2px solid var(--p2);outline-offset:2px}
+.item.done .body{opacity:.45}
+.body{min-width:0}
+.title{font-family:var(--display);font-size:17px;font-weight:600;margin:0 0 4px;letter-spacing:-.005em}
+.num{font-family:var(--mono);font-size:13px;color:var(--dim);margin-right:8px;font-weight:500}
+.loc{
+  font-family:var(--mono);font-size:12px;color:var(--p2);
+  margin:0 0 10px;word-break:break-all;
+}
+.why{margin:0 0 12px;color:var(--muted);font-size:14.5px}
+.why b{color:var(--text);font-weight:600}
+
+/* ---------- code ---------- */
+pre{
+  margin:12px 0 0;padding:14px 16px;background:var(--surface);
+  border:1px solid var(--rule);border-radius:4px;
+  overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.65;
+  color:#c7d2d6;
+}
+pre .c{color:var(--dim)}
+pre .del{color:var(--p0)}
+pre .add{color:var(--ok)}
+code{font-family:var(--mono);font-size:.88em;background:var(--surface-2);padding:2px 5px;border-radius:3px;color:#c7d2d6}
+.why code,.sec-note code,.howto code{background:var(--surface-2)}
+
+/* ---------- callout ---------- */
+.warn{
+  margin:16px 0 0;padding:12px 15px;background:rgba(255,107,74,.07);
+  border-left:2px solid var(--p0);border-radius:0 3px 3px 0;
+  font-size:13.5px;color:var(--muted);
+}
+.warn b{color:var(--p0);font-weight:600}
+.tip{
+  margin:16px 0 0;padding:12px 15px;background:rgba(91,168,201,.07);
+  border-left:2px solid var(--p2);border-radius:0 3px 3px 0;
+  font-size:13.5px;color:var(--muted);
+}
+.tip b{color:var(--p2);font-weight:600}
+
+/* ---------- footer ---------- */
+footer{
+  margin-top:72px;padding-top:24px;border-top:1px solid var(--rule);
+  font-family:var(--mono);font-size:11.5px;color:var(--dim);
+  display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;
+}
+
+ul.plain{margin:10px 0 0;padding-left:18px;color:var(--muted);font-size:14px}
+ul.plain li{margin-bottom:5px}
+ul.plain b{color:var(--text);font-weight:600}
+
+@media(max-width:600px){
+  .item{grid-template-columns:20px 1fr;gap:11px}
+  header{padding:40px 0 30px}
+  pre{font-size:11.5px}
+}
+@media print{
+  body{background:#fff;color:#111}
+  .tracker{display:none}
+  pre{background:#f5f5f5;color:#111;border-color:#ccc}
+}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<div class="tracker">
+  <div class="tracker-inner">
+    <span class="tracker-label">Tiến độ</span>
+    <div class="tracker-bar"><div class="tracker-fill" id="fill"></div></div>
+    <span class="tracker-count" id="count">0 / 0</span>
+  </div>
+</div>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Bản làm việc · repo review</p>
+  <h1>youtube-automation-agent<br><em>fix list &amp; kế hoạch Electron</em></h1>
+  <p class="lede">Danh sách vấn đề cần sửa, sắp theo thứ tự thi công, kèm patch cụ thể. Phần cuối là kế hoạch bọc dự án thành desktop app.</p>
+  <div class="context">
+    <span class="chip">Bối cảnh: <b>chạy local, single-user</b></span>
+    <span class="chip">Mục tiêu: <b>Electron desktop</b></span>
+    <span class="chip">Codebase: <b>~11.9k dòng JS</b></span>
+    <span class="chip">Stack: <b>Node + Express + SQLite</b></span>
+  </div>
+  <div class="howto">
+    <p><b>Cách dùng:</b> tick từng mục khi xong — thanh tiến độ phía trên tự cập nhật (trạng thái đã tick lưu sẵn trong chính file HTML này, không bị reset khi đóng tab; tick/bỏ tick thêm vẫn chỉ giữ trong phiên hiện tại). Số dòng tham chiếu theo commit <code>cb6a1e7</code>; nếu đã sửa file thì tìm theo tên hàm thay vì số dòng.</p>
+    <p style="margin-top:10px"><b>Cập nhật 2026-08-19:</b> đã làm xong P0–P3 (18/19, trừ mục 04) và E1–E6 qua 2 commit <code>c194145</code> (fix list + E1–E4) và <code>ef1098b</code> (Electron app E5–E6, chạy <code>npm run app</code> và build <code>npm run dist</code> đã verify thành công trên macOS arm64). Chi tiết ở mục tương ứng bên dưới.</p>
+  </div>
+</header>
+
+<!-- ================= P0 ================= -->
+<section class="p0" id="p0">
+  <div class="sec-head"><span class="sec-tag">P0</span><h2>Làm trước khi chạy thật</h2></div>
+  <p class="sec-note">Năm mục này rẻ và chặn được các thiệt hại không hoàn tác được: lộ token kênh, upload lỗi, mất database.</p>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">01</span>Bind server về localhost</p>
+      <p class="loc">index.js:841 — YouTubeAutomationAgent.start()</p>
+      <p class="why"><code>app.listen(PORT)</code> đang nghe trên <code>0.0.0.0</code>, tức mọi interface. Ở nhà sau NAT thì không sao, nhưng khi bạn dùng wifi quán cà phê hay mạng công ty, bất kỳ máy nào trong cùng LAN vào <code>http://&lt;ip-của-bạn&gt;:3456</code> là điều khiển được toàn bộ dashboard — không cần mật khẩu, vì các route GET vốn không có auth.</p>
+<pre><span class="del">- this.app.listen(PORT, () =&gt; {</span>
+<span class="add">+ const HOST = process.env.HOST || '127.0.0.1';</span>
+<span class="add">+ this.app.listen(PORT, HOST, () =&gt; {</span></pre>
+      <div class="tip"><b>Lưu ý cho Electron:</b> giữ nguyên <code>127.0.0.1</code>, renderer sẽ load thẳng từ đó.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">02</span>Khoá quyền file credential</p>
+      <p class="loc">utils/credential-manager.js:44–53 — saveCredentials(), saveTokens()</p>
+      <p class="why"><code>config/credentials.json</code> và <code>config/tokens.json</code> đang ghi plaintext với quyền mặc định (thường 644). Trong đó có <b>OAuth refresh token của kênh YouTube</b> — mất file là mất kênh. Sửa cả file đang có lẫn code ghi file.</p>
+<pre><span class="c"># file đang tồn tại</span>
+chmod 700 config
+chmod 600 config/credentials.json config/tokens.json
+
+<span class="c">// và trong code:</span>
+<span class="del">- await fs.writeFile(this.credentialsPath, JSON.stringify(this.credentials, null, 2));</span>
+<span class="add">+ await fs.writeFile(this.credentialsPath, JSON.stringify(this.credentials, null, 2), { mode: 0o600 });</span></pre>
+      <p class="why" style="margin-top:12px">Áp dụng y hệt cho <code>saveTokens()</code>.</p>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">03</span>Sửa xung đột publishAt / privacyStatus</p>
+      <p class="loc">agents/publishing-scheduling-agent.js:129–133 — uploadToYouTube()</p>
+      <p class="why">YouTube Data API bắt buộc <code>privacyStatus: 'private'</code> khi request có <code>publishAt</code>. Code hiện lấy <code>DEFAULT_PRIVACY_STATUS</code> — nếu bạn set <code>public</code> thì upload sẽ lỗi hoặc <code>publishAt</code> bị bỏ qua và video lên ngay lập tức. Ngoài ra <code>publishAt</code> ở quá khứ cũng bị API từ chối. Đây là <b>bug sẽ đập vào mặt bạn ngay lần schedule đầu tiên</b>.</p>
+<pre><span class="add">+ const scheduled = scheduleEntry.publishTime</span>
+<span class="add">+   &amp;&amp; new Date(scheduleEntry.publishTime).getTime() &gt; Date.now();</span>
+<span class="add">+</span>
+  status: {
+<span class="del">-   privacyStatus: metadata.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private',</span>
+<span class="del">-   publishAt: scheduleEntry.publishTime,</span>
+<span class="add">+   <span class="c">// publishAt chỉ hợp lệ khi privacyStatus là 'private'</span></span>
+<span class="add">+   privacyStatus: scheduled</span>
+<span class="add">+     ? 'private'</span>
+<span class="add">+     : (metadata.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private'),</span>
+<span class="add">+   ...(scheduled ? { publishAt: scheduleEntry.publishTime } : {}),</span>
+    selfDeclaredMadeForKids: false
+  }</pre>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box">
+    <div class="body">
+      <p class="title"><span class="num">04</span>Backup DB trước mỗi lần pull</p>
+      <p class="loc">data/youtube_automation.db</p>
+      <p class="why">Dự án <b>chưa có migration system</b> — <code>createTables()</code> chỉ chạy <code>CREATE TABLE IF NOT EXISTS</code>. Version mới thêm một cột là DB cũ của bạn vỡ im lặng: query lỗi, hoặc tệ hơn là ghi sai. Trước khi có mục 11, tạm thời làm tay.</p>
+<pre>cp data/youtube_automation.db data/backup_$(date +%F_%H%M).db
+git pull
+npm install
+npm test   <span class="c"># chỉ khi DB còn trống — xem mục 05</span></pre>
+      <div class="tip"><b>Chưa tick vì đây là thao tác tay, không phải code.</b> Mục 11 (migration system) đã xong nên rủi ro giảm nhiều, nhưng vẫn nên backup trước khi pull nhánh <code>c194145</code>/<code>ef1098b</code> vào máy thật — DB sẽ bị stamp <code>PRAGMA user_version = 1</code> ngay lần mở đầu tiên.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">05</span>Tách test ra khỏi DB thật</p>
+      <p class="loc">test.js — nhiều chỗ: <code>new Database()</code></p>
+      <p class="why"><code>test.js</code> khởi tạo <code>Database</code> trỏ thẳng vào <code>data/youtube_automation.db</code> rồi dọn bằng <code>DELETE</code>. Test fail giữa chừng là <b>để lại rác trong DB production</b> của bạn. Trước mắt: đừng chạy <code>npm test</code> sau khi đã có dữ liệu thật. Fix đúng: cho <code>Database</code> nhận path qua biến môi trường.</p>
+<pre><span class="c">// database/db.js — constructor</span>
+<span class="del">- this.dbPath = path.join(__dirname, '..', 'data', 'youtube_automation.db');</span>
+<span class="add">+ this.dbPath = process.env.YAA_DB_PATH</span>
+<span class="add">+   || path.join(__dirname, '..', 'data', 'youtube_automation.db');</span></pre>
+      <p class="why" style="margin-top:12px">Rồi trong <code>package.json</code>:</p>
+<pre>"test": "YAA_DB_PATH=$(mktemp -d)/test.db node test.js"</pre>
+      <div class="tip"><b>Trùng việc với Electron:</b> mục này là bước đầu của việc trừu tượng hoá đường dẫn ở <b>E2</b> — làm một lần dùng cho cả hai.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= P1 ================= -->
+<section class="p1" id="p1">
+  <div class="sec-head"><span class="sec-tag">P1</span><h2>Bug làm hỏng output</h2></div>
+  <p class="sec-note">Không ai tấn công bạn cả — đây là những chỗ tự nó hỏng trong quá trình dùng bình thường.</p>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">06</span>Escape HTML trong slideshow</p>
+      <p class="loc">utils/ai-video-generator.js:575–614 — generateContentSlides(), formatSectionContent()</p>
+      <p class="why">Text do LLM sinh (<code>section.title</code>, <code>section.content</code>, <code>item.title</code>) được chèn thẳng vào HTML rồi render bằng Chromium, không escape. Một dấu <code>&lt;</code> hay <code>&amp;</code> trong script là <b>vỡ slide, video ra sai</b>. Ở chế độ local thì đây chủ yếu là bug hiển thị, nhưng nó cũng là đường prompt-injection nếu topic đến từ nguồn ngoài.</p>
+<pre><span class="c">// thêm helper ở đầu file</span>
+function esc(v) {
+  return String(v ?? '').replace(/[&amp;&lt;&gt;"']/g, c =&gt; (
+    { '&amp;':'&amp;amp;', '&lt;':'&amp;lt;', '&gt;':'&amp;gt;', '"':'&amp;quot;', "'":'&amp;#39;' }[c]
+  ));
+}
+
+<span class="c">// rồi bọc mọi chỗ nội suy</span>
+<span class="del">- &lt;h2&gt;${section.title}&lt;/h2&gt;</span>
+<span class="add">+ &lt;h2&gt;${esc(section.title)}&lt;/h2&gt;</span>
+
+<span class="del">- `&lt;p&gt;${item.number}. ${item.title}&lt;/p&gt;`</span>
+<span class="add">+ `&lt;p&gt;${esc(item.number)}. ${esc(item.title)}&lt;/p&gt;`</span>
+
+<span class="del">- `&lt;p&gt;${section.content.slice(0, 200)}...`</span>
+<span class="add">+ `&lt;p&gt;${esc(section.content.slice(0, 200))}...`</span></pre>
+      <p class="why" style="margin-top:12px">Kiểm tra cả <code>createSlideshowHTML()</code> — phần title/hook cũng nội suy tương tự.</p>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">07</span>Thumbnail / captions fail âm thầm</p>
+      <p class="loc">agents/publishing-scheduling-agent.js:172–186, 188–210</p>
+      <p class="why"><code>uploadThumbnail()</code> và <code>uploadCaptions()</code> đang <code>catch</code> rồi chỉ <code>logger.error</code>. Video lên kênh, schedule báo <code>published</code>, nhưng <b>không có thumbnail</b> — mà với YouTube thì thumbnail gần như quyết định CTR. Bạn sẽ không biết cho tới lúc mở kênh xem.</p>
+<pre><span class="c">// trong uploadToYouTube(), thu kết quả thay vì bỏ qua</span>
+<span class="add">+ const warnings = [];</span>
+  if (metadata.thumbnail?.path) {
+<span class="del">-   await this.uploadThumbnail(videoId, metadata.thumbnail.path);</span>
+<span class="add">+   const ok = await this.uploadThumbnail(videoId, metadata.thumbnail.path);</span>
+<span class="add">+   if (!ok) warnings.push('thumbnail_upload_failed');</span>
+  }
+<span class="c">// tương tự cho captions, rồi trả warnings lên caller</span>
+<span class="c">// để publishContent() gọi operator.notify() cảnh báo bạn</span></pre>
+      <p class="why" style="margin-top:12px">Cho <code>uploadThumbnail</code> / <code>uploadCaptions</code> <code>return true/false</code> thay vì nuốt lỗi.</p>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">08</span>Anchor đuôi .mp4 khi đổi tên file</p>
+      <p class="loc">utils/ai-video-generator.js:355</p>
+      <p class="why"><code>outputPath.replace('.mp4', '_visual.mp4')</code> thay <b>lần khớp đầu tiên ở bất kỳ đâu</b> trong chuỗi. Nếu path chứa <code>.mp4</code> ở giữa (tên thư mục, tên topic có dấu chấm) thì file ghi sai chỗ. Dòng 665 trong cùng file đã dùng regex đúng — chỗ này chưa, nên sửa cho nhất quán.</p>
+<pre><span class="del">- const videoPath = outputPath.replace('.mp4', '_visual.mp4');</span>
+<span class="add">+ const videoPath = outputPath.replace(/\.mp4$/i, '_visual.mp4');</span></pre>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">09</span>Guard chuỗi truy cập sâu trong metadata</p>
+      <p class="loc">agents/publishing-scheduling-agent.js:125</p>
+      <p class="why"><code>metadata.seo.metadata.category.toString()</code> — bốn tầng không guard. SEO agent parse JSON từ LLM, chỉ cần model trả thiếu một khoá là <b>TypeError ngay tại thời điểm upload</b>, sau khi đã tốn hết chi phí generate.</p>
+<pre><span class="del">- categoryId: metadata.seo.metadata.category.toString(),</span>
+<span class="del">- defaultLanguage: metadata.seo.metadata.language,</span>
+<span class="add">+ categoryId: String(metadata.seo?.metadata?.category ?? 22),</span>
+<span class="add">+ defaultLanguage: metadata.seo?.metadata?.language || 'en',</span></pre>
+      <div class="tip"><b>Rộng hơn:</b> ba agent (<code>content-strategy</code>, <code>script-writer</code>, <code>seo-optimizer</code>) đều <code>JSON.parse</code> output LLM rồi dùng thẳng. Nên có một hàm validate schema tối thiểu trước khi đẩy xuống pipeline.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">10</span>Vá dependency</p>
+      <p class="loc">package-lock.json</p>
+      <p class="why"><code>npm audit</code> báo <b>29 lỗ hổng (1 critical, 18 high)</b>. Đáng chú ý: <code>axios 1.11.0</code> với khoảng 30 advisory (prototype pollution → SSRF, credential injection) — chạm tới được qua <code>NOTIFICATION_WEBHOOK_URL</code> và các URL tải ảnh/video từ provider. Lockfile đang stale so với range trong <code>package.json</code>.</p>
+<pre>npm audit fix
+npm audit          <span class="c"># xem còn lại gì</span>
+npm test</pre>
+      <div class="warn"><b>Đừng chạy</b> <code>npm audit fix --force</code> — nó sẽ nâng <code>sqlite3</code> lên 6.x (breaking). Phần <code>sqlite3</code> giải quyết ở <b>E1</b> bằng cách đổi sang <code>better-sqlite3</code>, gọn hơn nhiều.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= P2 ================= -->
+<section class="p2" id="p2">
+  <div class="sec-head"><span class="sec-tag">P2</span><h2>Chất lượng dài hạn</h2></div>
+  <p class="sec-note">Không gấp, nhưng nếu định dùng lâu và pull update thường xuyên thì mục 11 là quan trọng nhất trong cả tài liệu này.</p>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">11</span>Migration system</p>
+      <p class="loc">database/db.js:34 — createTables()</p>
+      <p class="why">Đây là <b>rủi ro lớn nhất với người dùng lâu dài</b>. Không có version tracking, mọi thay đổi schema đều là thay đổi phá vỡ. Dùng <code>PRAGMA user_version</code> của SQLite — không cần thư viện.</p>
+<pre>async migrate() {
+  const row = await this.getRow('PRAGMA user_version');
+  let v = row?.user_version ?? 0;
+
+  const migrations = [
+    <span class="c">/* v1 */</span> async () =&gt; { await this.createTables(); },
+    <span class="c">/* v2 */</span> async () =&gt; {
+      await this.executeQuery('ALTER TABLE productions ADD COLUMN foo TEXT');
+    },
+  ];
+
+  for (; v &lt; migrations.length; v++) {
+    this.logger.info(`Migrating DB v${v} → v${v + 1}`);
+    await migrations[v]();
+    await this.executeQuery(`PRAGMA user_version = ${v + 1}`);
+  }
+}</pre>
+      <p class="why" style="margin-top:12px">Gọi <code>migrate()</code> thay cho <code>createTables()</code> trong <code>initialize()</code>. Từ đó về sau mỗi thay đổi schema là thêm một hàm vào mảng.</p>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">12</span>Bọc transaction cho luồng approve</p>
+      <p class="loc">index.js:818–828 — approveContent()</p>
+      <p class="why"><code>saveContentReview()</code> → <code>updateProductionStatus()</code> → <code>notify()</code> đang là ba lệnh rời. Máy sleep, process bị kill, hoặc lỗi giữa chừng là <b>state lệch</b>: review ghi <code>approved</code> nhưng production vẫn <code>pending</code>, hoặc ngược lại.</p>
+<pre><span class="c">// thêm helper trong db.js</span>
+async transaction(fn) {
+  await this.executeQuery('BEGIN');
+  try {
+    const result = await fn();
+    await this.executeQuery('COMMIT');
+    return result;
+  } catch (e) {
+    await this.executeQuery('ROLLBACK');
+    throw e;
+  }
+}</pre>
+      <div class="tip"><b>Với <code>better-sqlite3</code> (E1)</b> việc này còn đơn giản hơn — nó có <code>db.transaction(fn)</code> sẵn và chạy đồng bộ.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">13</span>Graceful shutdown</p>
+      <p class="loc">index.js — cuối file, sau start()</p>
+      <p class="why">Hiện <code>db.close()</code> không bao giờ được gọi. Ctrl+C hoặc đóng app là cắt ngang job đang chạy, SQLite có thể để lại <code>-journal</code>. Với Electron thì bắt buộc phải có, vì <code>before-quit</code> cần chờ backend dọn xong.</p>
+<pre>async shutdown() {
+  this.logger.info('Shutting down...');
+  if (this.scheduler) await this.scheduler.pauseAutomation();
+  if (this.server) await new Promise(r =&gt; this.server.close(r));
+  if (this.db) await this.db.close();
+}
+
+<span class="c">// và ở cuối file</span>
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, async () =&gt; { await agent.shutdown(); process.exit(0); });
+}</pre>
+      <p class="why" style="margin-top:12px">Nhớ gán <code>this.server = this.app.listen(...)</code> ở mục 01 để có handle mà close.</p>
+      <div class="warn"><b>Bug thật phát hiện khi test bản Electron đã đóng gói:</b> <code>server.close(cb)</code> chỉ gọi <code>cb</code> sau khi <b>mọi</b> connection tự đóng — mà dashboard poll <code>/api/dashboard</code> mỗi 8 giây qua keep-alive connection thì <b>không bao giờ tự đóng</b>. Kết quả: <code>shutdown()</code> treo vô hạn, app không bao giờ thoát thật sự dù log đã in "Shutting down...". Sửa bằng <code>this.server.closeAllConnections()</code> (Node ≥18.2) trước khi await callback. Đã verify: treo vô hạn → còn ~2ms.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">14</span>Timezone cho cron</p>
+      <p class="loc">schedules/daily-automation.js:31–77</p>
+      <p class="why">Sáu cron job đang chạy theo giờ local của process. DB có setting <code>channel_timezone</code> nhưng không được dùng ở đâu cả. Máy bạn ở VN thì mặc định đúng — nhưng nếu sau này chuyển sang VPS (thường UTC) thì lịch lệch 7 tiếng mà không có cảnh báo nào.</p>
+<pre>const tz = await this.db.getSetting('channel_timezone')
+  || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+cron.schedule('0 6 * * *', handler, { scheduled: false, timezone: tz });</pre>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">15</span>Đếm quota YouTube</p>
+      <p class="loc">agents/publishing-scheduling-agent.js — publishContent()</p>
+      <p class="why">Mỗi <code>videos.insert</code> tốn <b>1600 units</b>, quota mặc định của một project là <b>10.000 units/ngày</b> → trần cứng khoảng <b>6 video/ngày</b>, chưa tính các call analytics. Setting <code>max_daily_posts</code> trong dashboard không liên quan gì tới con số này. Hiện code chỉ phát hiện ra khi API trả lỗi giữa chừng, sau khi đã generate xong.</p>
+      <ul class="plain">
+        <li>Thêm bảng <code>api_quota</code> hoặc setting đếm units theo ngày</li>
+        <li><b>Chặn trước</b> khi gọi <code>videos.insert</code> nếu vượt ngưỡng</li>
+        <li>Hiện số units còn lại trên dashboard</li>
+        <li>Bắt riêng lỗi <code>quotaExceeded</code> và đẩy vào notification thay vì log chung</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= P3 ================= -->
+<section class="p3" id="p3">
+  <div class="sec-head"><span class="sec-tag">P3</span><h2>Dọn dẹp</h2></div>
+  <p class="sec-note">Không ảnh hưởng chức năng, nhưng làm trước khi đóng gói Electron thì bundle nhẹ và sạch hơn.</p>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">16</span>Dùng FFmpeg hệ thống</p>
+      <p class="loc">.env — FFMPEG_PATH</p>
+      <p class="why"><code>utils/ffmpeg.js</code> ưu tiên <code>FFMPEG_PATH</code> trước <code>ffmpeg-static</code>. Nếu máy đã có ffmpeg thì set biến này để khỏi tải bản bundled (~80MB).</p>
+<pre>FFMPEG_PATH=/usr/bin/ffmpeg    <span class="c"># which ffmpeg</span></pre>
+      <div class="warn"><b>Ngược lại khi build Electron:</b> lúc đó <i>nên</i> giữ <code>ffmpeg-static</code> để máy người dùng không cần cài gì — xem <b>E6</b>.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">17</span>Bỏ Playwright, thay bằng sharp</p>
+      <p class="loc">utils/ai-video-generator.js:315–367 — generateSlideshowVideo()</p>
+      <p class="why">Đang bundle <b>Chromium ~300MB</b> chỉ để chụp ảnh tĩnh của vài slide HTML. <code>sharp</code> đã nằm sẵn trong <code>dependencies</code> và làm được việc này. Trong context Electron thì càng vô lý — bạn đã có sẵn một Chromium trong app rồi.</p>
+      <ul class="plain">
+        <li><b>Cách A:</b> render slide bằng <code>sharp</code> — compose text lên nền gradient/ảnh, xuất PNG. Nhanh nhất, bỏ được Playwright hoàn toàn.</li>
+        <li><b>Cách B:</b> giữ HTML nhưng chụp bằng <code>BrowserWindow</code> ẩn của Electron (<code>capturePage()</code>). Giữ nguyên layout hiện có, không thêm dependency.</li>
+      </ul>
+      <div class="tip"><b>Ưu tiên cao nếu build Electron</b> — mục này chuyển từ P3 lên P1 trong lộ trình desktop.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">18</span>Dọn nốt tên cũ "Lumen"</p>
+      <p class="loc">README.md, package.json, dashboard/app.js, examples/, scripts/growth/, assets/demo/</p>
+      <p class="why">Lần rename sang <i>YouTube Automation Agent</i> chưa xong — còn sót ở 8 file. Riêng <code>package.json</code> description và <code>dashboard/app.js</code> là hiển thị ra người dùng.</p>
+<pre>grep -ril "lumen" --exclude-dir=node_modules --exclude=package-lock.json .</pre>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">19</span>Đưa reports/growth ra khỏi repo</p>
+      <p class="loc">reports/growth/ — 5 file</p>
+      <p class="why">Fork census, baseline traffic, prelaunch readiness — đây là artifact marketing nội bộ, không phải code. Nó làm loãng repo và sẽ bị đóng gói vào bundle Electron nếu không loại trừ.</p>
+<pre>git rm -r --cached reports/
+echo "reports/" &gt;&gt; .gitignore</pre>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ELECTRON ================= -->
+<section class="el" id="electron">
+  <div class="sec-head"><span class="sec-tag">E</span><h2>Build Electron desktop app</h2></div>
+  <p class="sec-note">Kiến trúc hiện tại rất hợp: dashboard đã là static HTML/CSS/JS thuần không build step, backend tách sạch qua REST. Ba mục <b>E1–E3</b> là refactor bắt buộc; <b>E4</b> trở đi mới là Electron thật. Prototype chạy được khoảng nửa ngày, bản đóng gói dùng thật khoảng 3–5 ngày.</p>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">E1</span>Đổi sqlite3 → better-sqlite3</p>
+      <p class="why"><code>sqlite3</code> là native module cần <code>node-gyp</code> rebuild theo ABI của Electron — phiền và hay hỏng. <code>better-sqlite3</code> có prebuilt sẵn cho Electron, API đồng bộ (đơn giản hơn), có <code>transaction()</code> built-in, và <b>giải quyết luôn nhánh CVE critical</b> từ <code>node-gyp</code>/<code>tar</code> ở mục 10.</p>
+<pre>npm uninstall sqlite3
+npm install better-sqlite3</pre>
+      <p class="why" style="margin-top:12px">Sửa ba helper ở <code>database/db.js:912–946</code> — chúng đang bọc callback thành Promise, giờ chỉ cần gọi thẳng:</p>
+<pre>executeQuery(q, p = []) { const r = this.db.prepare(q).run(...p);
+                          return { lastID: r.lastInsertRowid, changes: r.changes }; }
+getRow(q, p = [])       { return this.db.prepare(q).get(...p); }
+getAllRows(q, p = [])   { return this.db.prepare(q).all(...p) || []; }</pre>
+      <p class="why" style="margin-top:12px">Các caller đang <code>await</code> vẫn chạy bình thường (<code>await</code> giá trị không phải Promise là hợp lệ), nên không phải sửa lan ra. Riêng <code>db.exec()</code> dùng cho DDL nhiều câu.</p>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">E2</span>Trừu tượng hoá đường dẫn data / config</p>
+      <p class="why"><b>Đây là phần chiếm nhiều công sức nhất.</b> <code>db.js</code>, <code>credential-manager.js</code> và các agent đều dùng <code>path.join(__dirname, '..', 'data' | 'config')</code>. Trong app đã đóng gói, thư mục đó nằm trong <code>app.asar</code> — <b>read-only</b>, ghi vào là crash. Phải chuyển hết sang <code>app.getPath('userData')</code>.</p>
+<pre><span class="c">// utils/paths.js — file mới</span>
+const path = require('path');
+
+function root() {
+  if (process.env.YAA_DATA_DIR) return process.env.YAA_DATA_DIR;
+  try {
+    const { app } = require('electron');
+    if (app?.getPath) return app.getPath('userData');
+  } catch (_) { <span class="c">/* chạy ngoài Electron */</span> }
+  return path.join(__dirname, '..');
+}
+
+const ROOT = root();
+module.exports = {
+  ROOT,
+  dataDir:   path.join(ROOT, 'data'),
+  configDir: path.join(ROOT, 'config'),
+  dbPath:    process.env.YAA_DB_PATH || path.join(ROOT, 'data', 'youtube_automation.db'),
+};</pre>
+      <p class="why" style="margin-top:12px">Rồi thay toàn bộ chỗ ghép path thủ công:</p>
+<pre>grep -rn "__dirname, '\.\.', '\(data\|config\)'" --include=*.js . | grep -v node_modules</pre>
+      <div class="tip"><b>Gộp với mục 05:</b> cùng một refactor. Làm ở đây thì mục 05 tự xong.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">E3</span>Gỡ Playwright</p>
+      <p class="why">Xem <b>mục 17</b>. Trong Electron thì đây là ưu tiên cao: bundle sẽ có hai bản Chromium nếu không gỡ, và <code>playwright</code> tải browser lúc <code>postinstall</code> — không đóng gói được sạch. Cách B (dùng <code>BrowserWindow</code> ẩn + <code>capturePage()</code>) giữ được toàn bộ layout HTML hiện có.</p>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">E4</span>Tách start() để tái sử dụng</p>
+      <p class="loc">index.js:832–855</p>
+      <p class="why"><code>start()</code> hiện gọi <code>process.exit(1)</code> khi init fail và tự in banner ra console — không dùng lại được trong main process. Tách phần listen ra và trả về server handle.</p>
+<pre>async start({ host = '127.0.0.1', port = process.env.PORT || 3456 } = {}) {
+  const ok = await this.initialize();
+<span class="del">-  if (!ok) { console.log(...); process.exit(1); }</span>
+<span class="add">+  if (!ok) throw new Error('Khởi tạo thất bại — kiểm tra cấu hình');</span>
+
+  this.server = this.app.listen(port, host);
+  await new Promise(r =&gt; this.server.once('listening', r));
+  return { url: `http://${host}:${port}`, setupRequired: this.setupRequired };
+}</pre>
+      <p class="why" style="margin-top:12px">Giữ block <code>require.main === module</code> ở cuối file để <code>npm start</code> vẫn chạy được như cũ.</p>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">E5</span>Main process</p>
+      <p class="loc">electron/main.js — file mới</p>
+      <p class="why">Backend chạy ngay trong main process, <code>BrowserWindow</code> load từ localhost. Không cần preload phức tạp vì dashboard chỉ gọi <code>fetch</code> tới API — giữ <code>nodeIntegration: false</code>.</p>
+<pre>const { app, BrowserWindow, Tray, Menu, shell, dialog } = require('electron');
+const path = require('path');
+
+let win = null, tray = null, agent = null, baseUrl = null;
+let quitting = false;
+
+async function boot() {
+  const { YouTubeAutomationAgent } = require('../index.js');
+  agent = new YouTubeAutomationAgent();
+  const info = await agent.start({ host: '127.0.0.1', port: 3456 });
+  baseUrl = info.url;
+}
+
+function createWindow() {
+  win = new BrowserWindow({
+    width: 1280, height: 860, minWidth: 940,
+    backgroundColor: '#14181b',
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  win.loadURL(baseUrl);
+
+  <span class="c">// link ngoài mở bằng browser hệ thống, không mở trong app</span>
+  win.webContents.setWindowOpenHandler(({ url }) =&gt; {
+    shell.openExternal(url); return { action: 'deny' };
+  });
+
+  <span class="c">// đóng cửa sổ = thu vào tray, scheduler vẫn chạy</span>
+  win.on('close', (e) =&gt; {
+    if (!quitting) { e.preventDefault(); win.hide(); }
+  });
+}
+
+function createTray() {
+  tray = new Tray(path.join(__dirname, 'assets', 'tray.png'));
+  tray.setToolTip('YouTube Automation Agent');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Mở dashboard', click: () =&gt; win.show() },
+    { type: 'separator' },
+    { label: 'Thoát', click: () =&gt; { quitting = true; app.quit(); } },
+  ]));
+  tray.on('click', () =&gt; win.show());
+}
+
+app.whenReady().then(async () =&gt; {
+  try { await boot(); }
+  catch (e) {
+    dialog.showErrorBox('Không khởi động được', e.message);
+    app.quit(); return;
+  }
+  createWindow();
+  createTray();
+});
+
+app.on('before-quit', async (e) =&gt; {
+  if (!agent || quitting === 'done') return;
+  e.preventDefault();
+  await agent.shutdown();      <span class="c">// mục 13</span>
+  quitting = 'done';
+  app.quit();
+});
+
+app.on('window-all-closed', () =&gt; { <span class="c">/* giữ chạy nền */</span> });</pre>
+      <div class="warn"><b>Tray là bắt buộc, không phải tuỳ chọn.</b> Scheduler dùng <code>node-cron</code> chạy trong process — đóng app là cron chết, video đã schedule không được đăng và không chạy bù. Không có tray thì phần automation vô nghĩa.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box" checked>
+    <div class="body">
+      <p class="title"><span class="num">E6</span>Cấu hình electron-builder</p>
+      <p class="loc">package.json</p>
+<pre>npm i -D electron electron-builder</pre>
+<pre>"main": "electron/main.js",
+"scripts": {
+  "start": "node index.js",
+  "app": "electron .",
+  "dist": "electron-builder"
+},
+"build": {
+  "appId": "com.tisorr.youtube-automation-agent",
+  "productName": "YouTube Automation Agent",
+  "files": [
+    "**/*",
+    "!reports/**", "!examples/**", "!assets/demo/**",
+    "!scripts/growth/**", "!test.js", "!walkthrough.js"
+  ],
+  "asarUnpack": [
+    "node_modules/ffmpeg-static/**",
+    "node_modules/better-sqlite3/**",
+    "node_modules/sharp/**"
+  ],
+  "linux":  { "target": ["AppImage", "deb"], "category": "AudioVideo" },
+  "win":    { "target": ["nsis"] },
+  "mac":    { "target": ["dmg"], "category": "public.app-category.video" }
+}</pre>
+      <div class="warn"><b><code>asarUnpack</code> là điểm dễ sai nhất.</b> Binary và native module <b>không thực thi được từ trong archive asar</b>. Thiếu dòng này thì app chạy ổn lúc dev, crash lúc đóng gói — và lỗi báo rất mơ hồ.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box">
+    <div class="body">
+      <p class="title"><span class="num">E7</span>Luồng OAuth trong app</p>
+      <p class="loc">oauth-server.js, modern-auth.js</p>
+      <p class="why">Giữ nguyên <code>oauth-server.js</code> nghe <code>localhost:8080</code> — Google cho phép redirect URI <code>http://localhost</code> với OAuth client loại <b>Desktop app</b>, không cần HTTPS hay domain.</p>
+      <ul class="plain">
+        <li>Mở URL authorize bằng <code>shell.openExternal()</code>, <b>không</b> bằng <code>BrowserWindow</code></li>
+        <li>Google <b>chặn embedded webview</b> cho OAuth — làm trong BrowserWindow sẽ bị từ chối đăng nhập</li>
+        <li><code>oauth-server.js:96</code> đang <code>spawn('node', ['index.js'])</code> sau khi auth xong — bỏ đoạn này trong Electron, backend đã chạy sẵn</li>
+        <li>Thay <code>walkthrough.js</code> (inquirer CLI) bằng UI setup trong dashboard, hoặc giữ tạm và chạy ngoài terminal lần đầu</li>
+      </ul>
+      <div class="tip"><b>Chưa làm.</b> Chưa test được vì chưa có credential thật để đi hết luồng OAuth trong app đóng gói — cần làm khi có API key/OAuth client thật để verify <code>shell.openExternal()</code> + callback vào <code>localhost:8080</code> hoạt động đúng.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box">
+    <div class="body">
+      <p class="title"><span class="num">E8</span>Auto-start cùng hệ điều hành</p>
+      <p class="why">Để scheduler chạy được các mốc 6:00, mỗi 15 phút, và 22:00 mà không cần bạn nhớ mở app.</p>
+<pre>app.setLoginItemSettings({
+  openAtLogin: true,
+  openAsHidden: true,          <span class="c">// khởi động thẳng vào tray</span>
+  args: ['--hidden'],
+});</pre>
+      <p class="why" style="margin-top:12px">Nên để người dùng bật/tắt trong phần Settings của dashboard thay vì bật cứng.</p>
+      <div class="tip"><b>Chưa làm.</b> Nice-to-have, không cần để chạy/build được app — để sau.</div>
+    </div>
+  </div>
+
+  <div class="item">
+    <input type="checkbox" class="box">
+    <div class="body">
+      <p class="title"><span class="num">E9</span>Kiểm tra trước khi đóng gói</p>
+      <ul class="plain">
+        <li>✅ Xoá <code>data/</code> và <code>config/</code> ở thư mục dự án, chạy bản đóng gói → xác nhận nó tạo mới trong <code>userData</code> chứ không phải trong app bundle</li>
+        <li>✅ Kiểm tra <code>app.getPath('userData')</code> thực tế: <br><code>~/.config/&lt;productName&gt;</code> (Linux) · <code>~/Library/Application Support/&lt;productName&gt;</code> (macOS) · <code>%APPDATA%\&lt;productName&gt;</code> (Windows)</li>
+        <li>⬜ Chạy đủ một pipeline sinh ra MP4 thật từ bản đóng gói — đây là chỗ lỗi asar lộ ra</li>
+        <li>⬜ Đóng cửa sổ, đợi qua một mốc cron, xác nhận job vẫn chạy</li>
+        <li>⬜ Quit từ tray, mở lại, xác nhận DB không hỏng và job dở dang được đánh dấu đúng</li>
+        <li>⬜ Kiểm tra quyền file: <code>config/tokens.json</code> phải là <code>600</code> cả trong <code>userData</code></li>
+      </ul>
+      <div class="tip"><b>2/6 xong (chưa tick vì chưa đủ cả 6).</b> Đã verify trên macOS arm64: xoá <code>userData</code>, chạy bản đóng gói (không phải <code>electron .</code> dev mode), xác nhận DB tạo đúng trong <code>~/Library/Application Support/youtube-automation-agent/data/</code>, không phải trong <code>app.asar</code>. 4 mục còn lại cần credential thật (pipeline MP4, cron thật) hoặc chạy qua đêm (cron/tray/relaunch) nên chưa làm trong phiên này.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= VPS ================= -->
+<section class="p3" id="vps" style="padding-top:64px">
+  <div class="sec-head"><span class="sec-tag">—</span><h2>Chỉ cần nếu sau này chuyển sang VPS</h2></div>
+  <p class="sec-note">Với bối cảnh local hoặc desktop app, những mục này bỏ qua được. Ghi lại phòng khi bạn đổi hướng.</p>
+  <ul class="plain" style="font-size:14.5px">
+    <li><b>Auth cho toàn bộ <code>/api/*</code></b> — hiện <code>requireAPIKey()</code> chỉ gắn vào route mutating. Mọi GET đều mở: <code>/api/dashboard</code> lộ settings và profile, <code>/api/content/:id</code> lộ script đầy đủ, <code>/api/content/:id/asset/*</code> cho tải thẳng video.</li>
+    <li><b><code>crypto.timingSafeEqual</code></b> thay cho <code>!==</code> khi so sánh API key (index.js:165).</li>
+    <li><b>Reverse proxy + TLS</b> — Caddy với <code>basic_auth</code> phủ toàn bộ <code>/</code>; app vẫn bind <code>127.0.0.1</code>, proxy mới là thứ nghe public.</li>
+    <li><b>Rate limit</b> trên <code>/generate</code> — mỗi request là tiền API thật.</li>
+    <li><b>Firewall</b> chỉ mở 22 và 443.</li>
+    <li><b>Cách gọn hơn:</b> không expose gì cả — SSH tunnel hoặc Tailscale. OAuth callback chỉ chạy một lần, sau đó googleapis tự refresh qua outbound HTTPS, không cần inbound.</li>
+  </ul>
+</section>
+
+<footer>
+  <span>youtube-automation-agent · fix list ở commit cb6a1e7 · tiến độ tới ef1098b</span>
+  <span>19 mục fix (18 xong) · 9 bước Electron (6 xong)</span>
+</footer>
+
+</div>
+
+<script>
+(function () {
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.box'));
+  var fill = document.getElementById('fill');
+  var count = document.getElementById('count');
+
+  function update() {
+    var done = boxes.filter(function (b) { return b.checked; }).length;
+    fill.style.width = (done / boxes.length * 100) + '%';
+    count.textContent = done + ' / ' + boxes.length;
+  }
+
+  boxes.forEach(function (b) {
+    b.closest('.item').classList.toggle('done', b.checked);
+    b.addEventListener('change', function () {
+      b.closest('.item').classList.toggle('done', b.checked);
+      update();
+    });
+  });
+
+  update();
+})();
+</script>
+</body>
+</html>
