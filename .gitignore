@@ -87,3 +87,6 @@ data/captions/
 data/scripts/
 data/videos/
 data/thumbnails/
+
+# Internal growth/marketing artifacts (not project code)
+reports/

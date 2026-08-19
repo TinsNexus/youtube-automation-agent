@@ -133,7 +133,7 @@ class SystemTest {
     await db.initialize();
 
     await db.executeQuery(
-      'INSERT INTO automation_events (event_type, status, data, created_at) VALUES (?, ?, ?, datetime("now"))',
+      "INSERT INTO automation_events (event_type, status, data, created_at) VALUES (?, ?, ?, datetime('now'))",
       ['test_event', 'success', JSON.stringify({ ok: true })]
     );
 
@@ -650,20 +650,31 @@ class SystemTest {
       return;
     }
 
-    const sharp = require('sharp');
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-slides-'));
 
     try {
+      const generator = new AIVideoGenerator({});
+
+      // Slide rendering must not shell out to a browser (Playwright removed) and
+      // must still escape LLM-provided text — a raw '<' or '&' must not reach the SVG parser.
+      const script = {
+        title: 'Title with <tag> & "quotes"',
+        mainContent: { sections: [{ title: 'Section & <b>bold</b>', content: 'Body text '.repeat(20) }] }
+      };
+      const deck = generator.buildSlideDeck(script);
+      if (deck.length !== 3) {
+        throw new Error(`Expected 3 slides (title, section, subscribe), got ${deck.length}`);
+      }
+
       const stills = [];
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < deck.length; i++) {
         const stillPath = path.join(dir, `slide_${i}.png`);
-        await sharp({
-          create: { width: 320, height: 180, channels: 3, background: { r: 60 * i, g: 80, b: 160 } }
-        }).png().toFile(stillPath);
+        await generator.renderSlideImage(deck[i], [], stillPath);
+        const stats = await fs.stat(stillPath);
+        if (!stats.size) throw new Error(`Slide ${i} rendered empty`);
         stills.push(stillPath);
       }
 
-      const generator = new AIVideoGenerator({});
       const videoPath = path.join(dir, 'out.mp4');
       await generator.renderSlidesToVideo(stills, 6, videoPath);
 
@@ -775,20 +786,20 @@ class SystemTest {
 
   async testDirectories() {
     const fs = require('fs').promises;
-    
-    const requiredDirs = [
-      'config',
-      'logs', 
-      'data',
-      'agents',
-      'database',
-      'utils',
-      'schedules'
-    ];
+    const paths = require('./utils/paths');
 
-    for (const dir of requiredDirs) {
-      const dirPath = path.join(__dirname, dir);
-      await fs.access(dirPath);
+    // Code directories ship with the repo and must always exist
+    const codeDirs = ['agents', 'database', 'utils', 'schedules'];
+    for (const dir of codeDirs) {
+      await fs.access(path.join(__dirname, dir));
+    }
+
+    // Runtime directories (data/config/logs) are created on demand, not committed —
+    // and under Electron they live outside the repo entirely (see utils/paths.js).
+    // Verify they can be created rather than assuming a prior run left them behind.
+    for (const dir of [paths.dataDir, paths.configDir, paths.logsDir]) {
+      await fs.mkdir(dir, { recursive: true });
+      await fs.access(dir);
     }
 
     this.logger.info('Directory structure test completed successfully');

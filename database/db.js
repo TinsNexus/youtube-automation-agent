@@ -1,11 +1,12 @@
-const sqlite3 = require('sqlite3').verbose();
+const SqliteDatabase = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs').promises;
 const { Logger } = require('../utils/logger');
+const paths = require('../utils/paths');
 
 class Database {
   constructor() {
-    this.dbPath = path.join(__dirname, '..', 'data', 'youtube_automation.db');
+    this.dbPath = paths.dbPath;
     this.db = null;
     this.logger = new Logger('Database');
   }
@@ -18,16 +19,30 @@ class Database {
       await fs.mkdir(path.dirname(this.dbPath), { recursive: true });
       
       // Connect to database
-      this.db = new sqlite3.Database(this.dbPath);
-      
-      // Create tables
-      await this.createTables();
-      
+      this.db = new SqliteDatabase(this.dbPath);
+
+      // Create/upgrade schema
+      await this.migrate();
+
       this.logger.success('Database initialized successfully');
       return true;
     } catch (error) {
       this.logger.error('Failed to initialize database:', error);
       throw error;
+    }
+  }
+
+  async migrate() {
+    let version = this.db.pragma('user_version', { simple: true });
+
+    const migrations = [
+      /* v1 */ async () => { await this.createTables(); }
+    ];
+
+    for (; version < migrations.length; version++) {
+      this.logger.info(`Migrating database v${version} → v${version + 1}`);
+      await migrations[version]();
+      this.db.pragma(`user_version = ${version + 1}`);
     }
   }
 
@@ -896,6 +911,32 @@ class Database {
     );
   }
 
+  // YouTube API quota tracking. Google resets quota at midnight Pacific Time,
+  // not UTC — using the wrong day key would report a fresh quota for hours
+  // while Google's is still exhausted. See agents/publishing-scheduling-agent.js.
+  quotaDayKey() {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
+  }
+
+  async getQuotaUsage() {
+    const today = this.quotaDayKey();
+    const storedDate = await this.getSetting('youtube_quota_date');
+    if (storedDate !== today) {
+      await this.setSetting('youtube_quota_date', today);
+      await this.setSetting('youtube_quota_used', '0');
+      return { date: today, used: 0 };
+    }
+    const used = parseInt(await this.getSetting('youtube_quota_used') || '0', 10);
+    return { date: today, used };
+  }
+
+  async addQuotaUsage(units) {
+    const { used } = await this.getQuotaUsage();
+    const next = used + units;
+    await this.setSetting('youtube_quota_used', String(next));
+    return next;
+  }
+
   async getAllSettings() {
     const rows = await this.getAllRows('SELECT * FROM settings ORDER BY key');
     return rows.reduce((settings, row) => {
@@ -909,52 +950,40 @@ class Database {
     return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   }
 
+  // better-sqlite3 throws on `undefined` bind params (sqlite3 silently treated
+  // them as NULL) — normalize here so every existing call site stays correct.
+  bindParams(params) {
+    return params.map(p => (p === undefined ? null : p));
+  }
+
   async executeQuery(query, params = []) {
-    return new Promise((resolve, reject) => {
-      this.db.run(query, params, function(error) {
-        if (error) {
-          reject(error);
-        } else {
-          resolve({ lastID: this.lastID, changes: this.changes });
-        }
-      });
-    });
+    const result = this.db.prepare(query).run(...this.bindParams(params));
+    return { lastID: result.lastInsertRowid, changes: result.changes };
   }
 
   async getRow(query, params = []) {
-    return new Promise((resolve, reject) => {
-      this.db.get(query, params, (error, row) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(row);
-        }
-      });
-    });
+    return this.db.prepare(query).get(...this.bindParams(params));
+  }
+
+  async transaction(fn) {
+    await this.executeQuery('BEGIN');
+    try {
+      const result = await fn();
+      await this.executeQuery('COMMIT');
+      return result;
+    } catch (error) {
+      await this.executeQuery('ROLLBACK');
+      throw error;
+    }
   }
 
   async getAllRows(query, params = []) {
-    return new Promise((resolve, reject) => {
-      this.db.all(query, params, (error, rows) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(rows || []);
-        }
-      });
-    });
+    return this.db.prepare(query).all(...this.bindParams(params)) || [];
   }
 
   async close() {
     if (this.db) {
-      return new Promise((resolve) => {
-        this.db.close((error) => {
-          if (error) {
-            this.logger.error('Error closing database:', error);
-          }
-          resolve();
-        });
-      });
+      this.db.close();
     }
   }
 
@@ -987,7 +1016,7 @@ class Database {
       this.getRow('SELECT COUNT(*) as count FROM content_strategies'),
       this.getRow('SELECT COUNT(*) as count FROM scripts'),
       this.getRow('SELECT COUNT(*) as count FROM productions'),
-      this.getRow('SELECT COUNT(*) as count FROM publish_schedule WHERE status = "published"'),
+      this.getRow("SELECT COUNT(*) as count FROM publish_schedule WHERE status = 'published'"),
       this.getRow('SELECT COUNT(*) as count FROM analytics_reports')
     ]);
 

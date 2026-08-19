@@ -2,13 +2,14 @@ const sharp = require('sharp');
 const path = require('path');
 const fs = require('fs').promises;
 const { Logger } = require('../utils/logger');
+const paths = require('../utils/paths');
 
 class ThumbnailDesignerAgent {
   constructor(db, credentials) {
     this.db = db;
     this.credentials = credentials;
     this.logger = new Logger('ThumbnailDesigner');
-    this.templatesPath = path.join(__dirname, '..', 'data', 'thumbnail-templates');
+    this.templatesPath = path.join(paths.dataDir, 'thumbnail-templates');
   }
 
   async initialize() {
@@ -20,7 +21,7 @@ class ThumbnailDesignerAgent {
   async ensureTemplatesDirectory() {
     try {
       await fs.mkdir(this.templatesPath, { recursive: true });
-      await fs.mkdir(path.join(__dirname, '..', 'uploads', 'thumbnails'), { recursive: true });
+      await fs.mkdir(path.join(paths.uploadsDir, 'thumbnails'), { recursive: true });
     } catch (error) {
       this.logger.error('Failed to create directories:', error);
     }
@@ -208,7 +209,7 @@ class ThumbnailDesignerAgent {
     const width = 1280;
     const height = 720;
     
-    const outputPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_${Date.now()}.png`);
+    const outputPath = path.join(paths.uploadsDir, 'thumbnails', `thumbnail_${Date.now()}.png`);
     
     // Create gradient background
     const svg = `
@@ -251,7 +252,7 @@ class ThumbnailDesignerAgent {
   }
 
   async addTextOverlay(imagePath, concept) {
-    const outputPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_final_${Date.now()}.png`);
+    const outputPath = path.join(paths.uploadsDir, 'thumbnails', `thumbnail_final_${Date.now()}.png`);
     
     // Create text overlay SVG
     const textSvg = `
@@ -301,7 +302,7 @@ class ThumbnailDesignerAgent {
   }
 
   async optimizeForYouTube(imagePath) {
-    const outputPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_optimized_${Date.now()}.jpg`);
+    const outputPath = path.join(paths.uploadsDir, 'thumbnails', `thumbnail_optimized_${Date.now()}.jpg`);
     
     // YouTube optimization: JPEG format, proper compression
     await sharp(imagePath)

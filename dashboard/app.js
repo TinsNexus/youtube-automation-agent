@@ -127,6 +127,8 @@ function renderDashboard() {
   $('#stat-scheduled').textContent = scheduled.length;
   $('#stat-published').textContent = state.stats.published || 0;
   $('#stat-score').textContent = state.analytics.averagePerformanceScore ? `${state.analytics.averagePerformanceScore}/100` : '—';
+  const quota = state.quota || { used: 0, limit: 0 };
+  $('#stat-quota').textContent = quota.limit ? `${quota.used}/${quota.limit}` : '—';
 
   renderReviews(reviews);
   renderJobs(activeJobs.length ? activeJobs : state.jobs.slice(0, 5));
@@ -285,7 +287,7 @@ function renderActivation(activation = {}) {
   if (milestones.firstRealVideo?.achieved) {
     container.insertAdjacentHTML('beforeend', `
       <div class="activation-share">
-        <span>Made something real with Lumen?</span>
+        <span>Made something real with YouTube Automation Agent?</span>
         <a class="button secondary small" href="https://github.com/darkzOGx/youtube-automation-agent/discussions/new?category=show-and-tell" target="_blank" rel="noreferrer">Share what you built</a>
       </div>`);
   }

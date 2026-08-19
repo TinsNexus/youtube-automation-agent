@@ -36,11 +36,11 @@ Already know what you are doing? `npm run setup` offers a shorter classic flow, 
 - At least one AI text provider key
 - FFmpeg, installed automatically through `ffmpeg-static`
 
-Gemini offers free access for supported text and TTS usage. Gemini AI image generation currently requires paid-tier access; without an image provider, Lumen can assemble gradient-based visuals instead.
+Gemini offers free access for supported text and TTS usage. Gemini AI image generation currently requires paid-tier access; without an image provider, the agent can assemble gradient-based visuals instead.
 
 ## From idea to published video
 
-| Stage | What Lumen does | What you control |
+| Stage | What the agent does | What you control |
 | --- | --- | --- |
 | Research | Finds topics and builds a content strategy | Niche, audience, blocked topics |
 | Script | Writes the hook, narrative, CTA, and metadata | Voice, format, length, brand direction |
@@ -49,7 +49,7 @@ Gemini offers free access for supported text and TTS usage. Gemini AI image gene
 | Publish | Schedules and uploads approved content | Privacy, timing, final decision |
 | Learn | Pulls performance signals into the next strategy cycle | Automation and optimization settings |
 
-Lumen distinguishes real MP4 output from simulated placeholders. Simulated output cannot enter the approval or publishing path.
+The agent distinguishes real MP4 output from simulated placeholders. Simulated output cannot enter the approval or publishing path.
 
 For release history, see [CHANGELOG.md](CHANGELOG.md).
 
@@ -184,7 +184,7 @@ DEFAULT_PRIVACY_STATUS=private
 
 The dashboard calculates setup, first-real-MP4, approval, publication, and repeat-generation milestones locally from SQLite and files on disk. A video counts only when a non-simulated `.mp4` with an MP4 container signature still exists.
 
-Anonymous milestone reporting is disabled by default and has no built-in collector. It activates only when you explicitly set both telemetry variables. The allowlisted payload contains the milestone name and time, Lumen version, OS family, Node major version, and a random installation ID. It never includes credentials, channel data, prompts, topics, titles, filenames, or video contents.
+Anonymous milestone reporting is disabled by default and has no built-in collector. It activates only when you explicitly set both telemetry variables. The allowlisted payload contains the milestone name and time, agent version, OS family, Node major version, and a random installation ID. It never includes credentials, channel data, prompts, topics, titles, filenames, or video contents.
 
 ## Automation Schedule
 
@@ -346,7 +346,7 @@ If this was useful, check out:
 
 [@darkzOGx](https://github.com/darkzOGx), a solo builder shipping AI automation and developer tools. Find me on [X](https://x.com/darkzOGx) and [laderalabs.io](https://laderalabs.io).
 
-If Lumen saves you time, a star helps it reach more developers.
+If this project saves you time, a star helps it reach more developers.
 
 ## Contributing
 

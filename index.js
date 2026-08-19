@@ -17,6 +17,7 @@ const { DailyAutomation } = require('./schedules/daily-automation');
 const { OperatorService } = require('./utils/operator-service');
 const { ActivationMetrics } = require('./utils/activation-metrics');
 const { AnonymousTelemetry } = require('./utils/anonymous-telemetry');
+const paths = require('./utils/paths');
 const { version } = require('./package.json');
 const chalk = require('chalk');
 
@@ -317,7 +318,7 @@ class YouTubeAutomationAgent {
 
     this.app.get('/api/dashboard', async (_req, res) => {
       try {
-        const [stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, activation] = await Promise.all([
+        const [stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, activation, quota] = await Promise.all([
           this.db.getStats(),
           this.db.listGenerationJobs(20),
           this.db.getPipelineOverview(50),
@@ -332,11 +333,14 @@ class YouTubeAutomationAgent {
             : Promise.resolve({ totalVideos: 0, averagePerformanceScore: 0, topPerformers: [], insights: [] }),
           this.activation
             ? this.activation.getSummary()
-            : Promise.resolve({ privacy: 'local-only', counts: {}, milestones: {} })
+            : Promise.resolve({ privacy: 'local-only', counts: {}, milestones: {} }),
+          this.agents.publishing
+            ? this.agents.publishing.getQuotaStatus()
+            : Promise.resolve({ used: 0, limit: 0, remaining: 0 })
         ]);
         if (this.telemetry) void this.telemetry.sync(activation);
         res.json({
-          stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, activation,
+          stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, activation, quota,
           system: {
             initialized: this.isInitialized,
             setupRequired: this.setupRequired,
@@ -442,7 +446,7 @@ class YouTubeAutomationAgent {
         const filePath = allowed[req.params.kind];
         if (!filePath) return res.status(404).json({ error: 'Asset not found' });
         const resolved = path.resolve(filePath);
-        const dataRoot = path.resolve(__dirname, 'data');
+        const dataRoot = path.resolve(paths.dataDir);
         if (!resolved.startsWith(`${dataRoot}${path.sep}`)) return res.status(403).json({ error: 'Asset path is not allowed' });
         await fs.access(resolved);
         return res.sendFile(resolved);
@@ -816,11 +820,13 @@ class YouTubeAutomationAgent {
       throw error;
     }
 
-    await this.db.saveContentReview(bundle.id, {
-      status: 'approved', editorData, qualityChecks: quality.checks,
-      reviewNotes: input.reviewNotes || 'Approved by operator', reviewedAt: new Date().toISOString()
+    await this.db.transaction(async () => {
+      await this.db.saveContentReview(bundle.id, {
+        status: 'approved', editorData, qualityChecks: quality.checks,
+        reviewNotes: input.reviewNotes || 'Approved by operator', reviewedAt: new Date().toISOString()
+      });
+      await this.db.updateProductionStatus(bundle.id, 'scheduled');
     });
-    await this.db.updateProductionStatus(bundle.id, 'scheduled');
     await this.operator.notify({
       type: 'content_approved', level: 'success', title: 'Content approved',
       message: `${productionData.script.title} is scheduled for ${scheduleEntry.publishTime}`,
@@ -829,39 +835,59 @@ class YouTubeAutomationAgent {
     return { productionId, reviewStatus: 'approved', qualityScore: quality.score, schedule: scheduleEntry };
   }
 
-  async start() {
+  async start({ host = process.env.HOST || '127.0.0.1', port = process.env.PORT || 3456 } = {}) {
     const initialized = await this.initialize();
-    
+
     if (!initialized) {
-      console.log(chalk.red('\n❌ Failed to initialize. Please check your configuration.'));
-      process.exit(1);
+      throw new Error('Initialization failed — check your configuration');
     }
-    
-    const PORT = process.env.PORT || 3456;
-    this.app.listen(PORT, () => {
-      console.log(chalk.green(`\n✅ YouTube Automation Agent running on port ${PORT}`));
-      console.log(chalk.gray('─'.repeat(50)));
-      console.log(chalk.white('📊 Dashboard: ') + chalk.cyan(`http://localhost:${PORT}`));
-      console.log(chalk.white('🔧 API Health: ') + chalk.cyan(`http://localhost:${PORT}/health`));
-      console.log(chalk.white('📅 Schedule: ') + chalk.cyan(`http://localhost:${PORT}/schedule`));
-      console.log(chalk.white('📈 Analytics: ') + chalk.cyan(`http://localhost:${PORT}/analytics`));
-      console.log(chalk.gray('─'.repeat(50)));
-      if (this.setupRequired) {
-        console.log(chalk.yellow('\n⚙️  Setup is required. The dashboard is available; run npm run walkthrough to enable generation.'));
-      } else {
-        console.log(chalk.yellow('\n🤖 Automation is active. Approved content will be published on schedule.'));
-      }
+
+    this.server = this.app.listen(port, host);
+    await new Promise((resolve, reject) => {
+      this.server.once('listening', resolve);
+      this.server.once('error', reject);
     });
+
+    return { url: `http://${host}:${port}`, setupRequired: this.setupRequired };
+  }
+
+  async shutdown() {
+    this.logger.info('Shutting down...');
+    if (this.scheduler) await this.scheduler.pauseAutomation();
+    if (this.server) await new Promise(resolve => this.server.close(resolve));
+    if (this.db) await this.db.close();
   }
 }
 
 // Start the agent
 if (require.main === module) {
   const agent = new YouTubeAutomationAgent();
-  agent.start().catch(error => {
-    console.error(chalk.red('Fatal error:'), error);
-    process.exit(1);
-  });
+  agent.start()
+    .then(({ url, setupRequired }) => {
+      console.log(chalk.green(`\n✅ YouTube Automation Agent running at ${url}`));
+      console.log(chalk.gray('─'.repeat(50)));
+      console.log(chalk.white('📊 Dashboard: ') + chalk.cyan(url));
+      console.log(chalk.white('🔧 API Health: ') + chalk.cyan(`${url}/health`));
+      console.log(chalk.white('📅 Schedule: ') + chalk.cyan(`${url}/schedule`));
+      console.log(chalk.white('📈 Analytics: ') + chalk.cyan(`${url}/analytics`));
+      console.log(chalk.gray('─'.repeat(50)));
+      if (setupRequired) {
+        console.log(chalk.yellow('\n⚙️  Setup is required. The dashboard is available; run npm run walkthrough to enable generation.'));
+      } else {
+        console.log(chalk.yellow('\n🤖 Automation is active. Approved content will be published on schedule.'));
+      }
+    })
+    .catch(error => {
+      console.error(chalk.red('Fatal error:'), error);
+      process.exit(1);
+    });
+
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, async () => {
+      await agent.shutdown();
+      process.exit(0);
+    });
+  }
 }
 
 module.exports = { YouTubeAutomationAgent };

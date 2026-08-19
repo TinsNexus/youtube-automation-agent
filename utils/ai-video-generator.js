@@ -2,10 +2,11 @@ const OpenAI = require('openai');
 const Replicate = require('replicate');
 const fs = require('fs').promises;
 const path = require('path');
-const { pathToFileURL } = require('url');
 const axios = require('axios');
+const sharp = require('sharp');
 const { Logger } = require('./logger');
 const { runFFmpeg, checkFFmpeg, ffmpegInstallHint } = require('./ffmpeg');
+const paths = require('./paths');
 
 class AIVideoGenerator {
   constructor(credentials) {
@@ -174,7 +175,7 @@ class AIVideoGenerator {
       const localPaths = [];
 
       for (let i = 0; i < count; i++) {
-        const imagePath = path.join(__dirname, '..', 'data', 'assets', `visual_${Date.now()}_${i}.png`);
+        const imagePath = path.join(paths.dataDir, 'assets', `visual_${Date.now()}_${i}.png`);
         await this.generateImage(enhancedPrompt, imagePath);
         localPaths.push(imagePath);
       }
@@ -319,41 +320,22 @@ class AIVideoGenerator {
       throw new Error(ffmpegInstallHint());
     }
 
-    const { chromium } = require('playwright');
-    const browser = await chromium.launch();
     const slidesDir = path.join(path.dirname(outputPath), 'slides');
+    await fs.mkdir(slidesDir, { recursive: true });
 
     try {
-      const page = await browser.newPage();
-      await page.setViewportSize({ width: 1920, height: 1080 });
-
-      // Create HTML for slideshow (only real image files can be embedded)
+      // Only real image files can be composited (only used for background art)
       const imageAssets = await this.filterImageAssets(visualAssets);
-      await page.setContent(this.createSlideshowHTML(script, imageAssets));
-
-      // Freeze CSS transitions/animations so each still is captured fully rendered
-      await page.addStyleTag({ content: '* { transition: none !important; animation: none !important; }' });
-      await page.waitForTimeout(1000); // Wait for assets to load
-
-      // Capture ONE still per slide instead of screenshotting at 30fps —
-      // FFmpeg turns the stills into a crossfaded video in seconds.
-      const slideCount = await page.evaluate(() => document.querySelectorAll('.slide').length);
-      await fs.mkdir(slidesDir, { recursive: true });
+      const deck = this.buildSlideDeck(script);
 
       const stills = [];
-      for (let i = 0; i < slideCount; i++) {
-        await page.evaluate((index) => {
-          document.querySelectorAll('.slide').forEach((slide, s) => {
-            slide.classList.toggle('active', s === index);
-          });
-        }, i);
-
+      for (let i = 0; i < deck.length; i++) {
         const stillPath = path.join(slidesDir, `slide_${String(i).padStart(3, '0')}.png`);
-        await page.screenshot({ path: stillPath });
+        await this.renderSlideImage(deck[i], imageAssets, stillPath);
         stills.push(stillPath);
       }
 
-      const videoPath = outputPath.replace('.mp4', '_visual.mp4');
+      const videoPath = outputPath.replace(/\.mp4$/i, '_visual.mp4');
       const duration = this.calculateScriptDuration(script);
       await this.renderSlidesToVideo(stills, duration, videoPath);
 
@@ -362,7 +344,6 @@ class AIVideoGenerator {
 
       return outputPath;
     } finally {
-      await browser.close().catch(() => {});
       await this.cleanupDirectory(slidesDir);
     }
   }
@@ -420,7 +401,7 @@ class AIVideoGenerator {
 
       try {
         await fs.access(asset);
-        images.push(pathToFileURL(asset).href);
+        images.push(asset);
       } catch (error) {
         // Skip missing files
       }
@@ -429,188 +410,161 @@ class AIVideoGenerator {
     return images;
   }
 
-  createSlideshowHTML(script, visualAssets) {
-    return `
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-            width: 1920px;
-            height: 1080px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            font-family: 'Arial', sans-serif;
-            overflow: hidden;
-        }
-        
-        .slide {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            opacity: 0;
-            transition: opacity 2s ease-in-out;
-        }
-        
-        .slide.active {
-            opacity: 1;
-        }
-        
-        .content {
-            text-align: center;
-            color: white;
-            max-width: 80%;
-        }
-        
-        h1 {
-            font-size: 72px;
-            margin-bottom: 30px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-        }
-        
-        h2 {
-            font-size: 48px;
-            margin-bottom: 20px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-        }
-        
-        p {
-            font-size: 36px;
-            line-height: 1.4;
-            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
-        }
-        
-        .background-image {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            opacity: 0.3;
-            z-index: -1;
-        }
-        
-        .particles {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            z-index: -1;
-        }
-        
-        .particle {
-            position: absolute;
-            background: rgba(255,255,255,0.8);
-            border-radius: 50%;
-            animation: float 6s ease-in-out infinite;
-        }
-        
-        @keyframes float {
-            0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(-20px); }
-        }
-    </style>
-</head>
-<body>
-    <div class="particles"></div>
-    
-    <!-- Title Slide -->
-    <div class="slide active">
-        ${visualAssets[0] ? `<img class="background-image" src="${visualAssets[0]}" />` : ''}
-        <div class="content">
-            <h1>${script.title}</h1>
-            <p>Ethereal Dreamscript</p>
-        </div>
-    </div>
-    
-    ${this.generateContentSlides(script, visualAssets).join('')}
-    
-    <!-- Subscribe Slide -->
-    <div class="slide">
-        <div class="content">
-            <h2>✨ Subscribe for More Stories ✨</h2>
-            <p>New content daily at 2:00 PM</p>
-        </div>
-    </div>
-    
-    <script>
-        // Create floating particles
-        function createParticles() {
-            const container = document.querySelector('.particles');
-            for (let i = 0; i < 20; i++) {
-                const particle = document.createElement('div');
-                particle.className = 'particle';
-                particle.style.left = Math.random() * 100 + '%';
-                particle.style.top = Math.random() * 100 + '%';
-                particle.style.width = (Math.random() * 4 + 2) + 'px';
-                particle.style.height = particle.style.width;
-                particle.style.animationDelay = Math.random() * 6 + 's';
-                container.appendChild(particle);
-            }
-        }
-        
-        let currentSlide = 0;
-        const slides = document.querySelectorAll('.slide');
-        
-        function advanceAnimation() {
-            slides[currentSlide].classList.remove('active');
-            currentSlide = (currentSlide + 1) % slides.length;
-            slides[currentSlide].classList.add('active');
-        }
-        
-        window.advanceAnimation = advanceAnimation;
-        createParticles();
-    </script>
-</body>
-</html>`;
+  escapeXML(value) {
+    return String(value ?? '').replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
   }
 
-  generateContentSlides(script, visualAssets) {
-    const slides = [];
-    
+  // Slide deck data model: no HTML/DOM involved, rendered to PNG stills via sharp.
+  buildSlideDeck(script) {
+    const deck = [{
+      variant: 'title',
+      imageIndex: 0,
+      heading: script.title,
+      lines: ['Ethereal Dreamscript']
+    }];
+
     if (script.mainContent && script.mainContent.sections) {
       script.mainContent.sections.forEach((section, index) => {
-        const assetIndex = Math.min(index + 1, visualAssets.length - 1);
-        
-        slides.push(`
-        <div class="slide">
-            ${visualAssets[assetIndex] ? `<img class="background-image" src="${visualAssets[assetIndex]}" />` : ''}
-            <div class="content">
-                <h2>${section.title}</h2>
-                ${this.formatSectionContent(section)}
-            </div>
-        </div>`);
+        deck.push({
+          variant: 'content',
+          imageIndex: index + 1,
+          heading: section.title,
+          lines: this.sectionLines(section)
+        });
       });
     }
-    
-    return slides;
+
+    deck.push({
+      variant: 'content',
+      imageIndex: null,
+      // No emoji: librsvg needs a color-emoji font to render one, and a bare
+      // Linux/Windows build (no Chromium fallback anymore) may not have one —
+      // a missing glyph renders as nothing, not a visible placeholder.
+      heading: 'Subscribe for More Stories',
+      lines: ['New content daily at 2:00 PM']
+    });
+
+    return deck;
   }
 
-  formatSectionContent(section) {
+  sectionLines(section) {
     if (section.items && Array.isArray(section.items)) {
-      return section.items.slice(0, 3).map(item => 
-        `<p>${item.number}. ${item.title}</p>`
-      ).join('');
+      return section.items.slice(0, 3).map(item => `${item.number}. ${item.title}`);
     }
-    
+
     if (section.steps && Array.isArray(section.steps)) {
-      return section.steps.slice(0, 3).map(step => 
-        `<p>${step.title}</p>`
-      ).join('');
+      return section.steps.slice(0, 3).map(step => `${step.title}`);
     }
-    
+
     if (typeof section.content === 'string') {
-      return `<p>${section.content.slice(0, 200)}${section.content.length > 200 ? '...' : ''}</p>`;
+      const text = section.content.slice(0, 200) + (section.content.length > 200 ? '...' : '');
+      return this.wrapText(text, 60);
     }
-    
-    return '<p>Content coming soon...</p>';
+
+    return ['Content coming soon...'];
+  }
+
+  wrapText(text, maxCharsPerLine) {
+    const words = text.split(/\s+/).filter(Boolean);
+    const lines = [];
+    let current = '';
+
+    for (const word of words) {
+      const next = current ? `${current} ${word}` : word;
+      if (next.length > maxCharsPerLine && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = next;
+      }
+    }
+    if (current) lines.push(current);
+
+    return lines;
+  }
+
+  async renderSlideImage(slide, imageAssets, outputPath) {
+    const width = 1920;
+    const height = 1080;
+    let background = await this.createGradientBackground(width, height);
+
+    const imageIndex = slide.imageIndex === null || imageAssets.length === 0
+      ? -1
+      : Math.min(slide.imageIndex, imageAssets.length - 1);
+
+    if (imageIndex >= 0) {
+      const dimmedImage = await this.createDimmedImageLayer(imageAssets[imageIndex], width, height, 0.3);
+      background = await sharp(background).composite([{ input: dimmedImage, blend: 'over' }]).png().toBuffer();
+    }
+
+    const textLayer = await this.createTextLayer(slide, width, height);
+    await sharp(background)
+      .composite([{ input: textLayer, blend: 'over' }])
+      .png()
+      .toFile(outputPath);
+
+    return outputPath;
+  }
+
+  async createGradientBackground(width, height) {
+    const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#667eea"/>
+          <stop offset="100%" stop-color="#764ba2"/>
+        </linearGradient>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#bg)"/>
+    </svg>`;
+    return sharp(Buffer.from(svg)).png().toBuffer();
+  }
+
+  // Reduces a cover-fitted image to 30% opacity, matching the previous CSS background-image treatment
+  async createDimmedImageLayer(imagePath, width, height, opacity) {
+    const { data, info } = await sharp(imagePath)
+      .resize(width, height, { fit: 'cover' })
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    const alphaValue = Math.round(255 * opacity);
+    for (let i = 3; i < data.length; i += 4) {
+      data[i] = alphaValue;
+    }
+
+    return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+  }
+
+  async createTextLayer(slide, width, height) {
+    const headingSize = slide.variant === 'title' ? 72 : 48;
+    const lineSize = 36;
+    const lineHeight = lineSize * 1.4;
+    const lines = slide.lines || [];
+
+    const totalTextHeight = headingSize + 30 + lines.length * lineHeight;
+    let y = (height - totalTextHeight) / 2 + headingSize;
+
+    const headingEl = `<text x="50%" y="${y}" text-anchor="middle" font-family="Arial, 'Helvetica Neue', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif" font-size="${headingSize}" font-weight="bold" fill="white" filter="url(#shadow)">${this.escapeXML(slide.heading)}</text>`;
+    y += 30;
+
+    const lineEls = lines.map(line => {
+      y += lineHeight;
+      return `<text x="50%" y="${y}" text-anchor="middle" font-family="Arial, 'Helvetica Neue', 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif" font-size="${lineSize}" fill="white" filter="url(#shadow)">${this.escapeXML(line)}</text>`;
+    }).join('');
+
+    const svg = `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="2" dy="2" stdDeviation="2" flood-color="#000000" flood-opacity="0.5"/>
+        </filter>
+      </defs>
+      ${headingEl}
+      ${lineEls}
+    </svg>`;
+
+    return sharp(Buffer.from(svg)).png().toBuffer();
   }
 
   calculateScriptDuration(script) {
@@ -725,7 +679,7 @@ class AIVideoGenerator {
       }
 
       const prompt = `YouTube thumbnail for "${script.title}", ${style} style, eye-catching, high contrast text, professional design, clickable, engaging`;
-      const thumbnailPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_${Date.now()}.png`);
+      const thumbnailPath = path.join(paths.uploadsDir, 'thumbnails', `thumbnail_${Date.now()}.png`);
 
       await this.generateImage(prompt, thumbnailPath);
 
@@ -764,7 +718,7 @@ class AIVideoGenerator {
     
     const paths = [];
     for (let i = 0; i < count; i++) {
-      const assetPath = path.join(__dirname, '..', 'data', 'assets', `visual_sim_${Date.now()}_${i}.info`);
+      const assetPath = path.join(paths.dataDir, 'assets', `visual_sim_${Date.now()}_${i}.info`);
       
       await fs.writeFile(assetPath, JSON.stringify({
         message: 'AI visual asset would be generated here',
@@ -797,7 +751,7 @@ class AIVideoGenerator {
   async simulateThumbnailGeneration(script, style) {
     this.logger.info('Simulating thumbnail generation...');
     
-    const thumbnailPath = path.join(__dirname, '..', 'uploads', 'thumbnails', `thumbnail_sim_${Date.now()}.info`);
+    const thumbnailPath = path.join(paths.uploadsDir, 'thumbnails', `thumbnail_sim_${Date.now()}.info`);
     await fs.mkdir(path.dirname(thumbnailPath), { recursive: true });
     
     await fs.writeFile(thumbnailPath, JSON.stringify({

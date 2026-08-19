@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const { Logger } = require('../utils/logger');
 const { AIVideoGenerator } = require('../utils/ai-video-generator');
+const paths = require('../utils/paths');
 
 class ProductionManagementAgent {
   constructor(db, credentials) {
@@ -128,7 +129,7 @@ class ProductionManagementAgent {
   }
 
   async processScript(script) {
-    const scriptPath = path.join(__dirname, '..', 'data', 'scripts', `${Date.now()}_script.json`);
+    const scriptPath = path.join(paths.dataDir, 'scripts', `${Date.now()}_script.json`);
     
     // Create formatted script for TTS
     const ttsScript = this.formatScriptForTTS(script);
@@ -230,7 +231,7 @@ class ProductionManagementAgent {
       
       // Fallback to original processing
       const productionThumbnailPath = path.join(
-        __dirname, '..', 'data', 'assets', 
+        paths.dataDir, 'assets',
         `thumbnail_${Date.now()}.jpg`
       );
       
@@ -413,7 +414,7 @@ class ProductionManagementAgent {
     this.logger.info('Generating AI audio narration...');
     
     try {
-      const audioPath = path.join(__dirname, '..', 'data', 'audio', `${productionData.id}_narration.mp3`);
+      const audioPath = path.join(paths.dataDir, 'audio', `${productionData.id}_narration.mp3`);
       
       // Read the TTS script
       const ttsText = await fs.readFile(productionData.assets.script.ttsPath, 'utf8');
@@ -442,7 +443,7 @@ class ProductionManagementAgent {
   async generateCaptions(productionData) {
     this.logger.info('Generating captions...');
     
-    const captionsPath = path.join(__dirname, '..', 'data', 'captions', `${productionData.id}_captions.srt`);
+    const captionsPath = path.join(paths.dataDir, 'captions', `${productionData.id}_captions.srt`);
     
     // Generate SRT captions based on script timing
     const captions = await this.createSRTCaptions(productionData);
@@ -552,7 +553,7 @@ class ProductionManagementAgent {
     this.logger.info('Assembling final AI-generated video...');
     
     try {
-      const finalVideoPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_final.mp4`);
+      const finalVideoPath = path.join(paths.dataDir, 'videos', `${productionData.id}_final.mp4`);
 
       // Use AI Video Generator to create the final video
       const producedPath = await this.aiVideoGenerator.generateVideo(
@@ -650,7 +651,7 @@ class ProductionManagementAgent {
 
   // Fallback simulation methods
   async simulateAudioGeneration(productionData) {
-    const audioPath = path.join(__dirname, '..', 'data', 'audio', `${productionData.id}_narration.mp3`);
+    const audioPath = path.join(paths.dataDir, 'audio', `${productionData.id}_narration.mp3`);
     
     await fs.writeFile(audioPath + '.info', JSON.stringify({
       message: 'AI TTS audio would be generated here',
@@ -668,7 +669,7 @@ class ProductionManagementAgent {
   }
 
   async simulateVideoAssembly(productionData) {
-    const finalVideoPath = path.join(__dirname, '..', 'data', 'videos', `${productionData.id}_final.mp4`);
+    const finalVideoPath = path.join(paths.dataDir, 'videos', `${productionData.id}_final.mp4`);
     
     const assemblyInstructions = {
       message: 'AI video would be assembled here',
