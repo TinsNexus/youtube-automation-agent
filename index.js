@@ -854,7 +854,15 @@ class YouTubeAutomationAgent {
   async shutdown() {
     this.logger.info('Shutting down...');
     if (this.scheduler) await this.scheduler.pauseAutomation();
-    if (this.server) await new Promise(resolve => this.server.close(resolve));
+    if (this.server) {
+      const closed = new Promise(resolve => this.server.close(resolve));
+      // server.close() only stops accepting new connections — its callback
+      // waits for existing ones to end on their own, which a keep-alive
+      // client (e.g. the dashboard polling every 8s) never does. Force them
+      // closed so shutdown doesn't hang forever on a still-connected client.
+      this.server.closeAllConnections();
+      await closed;
+    }
     if (this.db) await this.db.close();
   }
 }

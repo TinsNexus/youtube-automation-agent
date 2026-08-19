@@ -71,6 +71,7 @@ build/
 !examples/*.png
 !examples/*.jpg
 !assets/youtube-automation-agent.jpg
+!electron/assets/*.png
 
 # Backup files
 *.backup

@@ -2,7 +2,7 @@
   "name": "youtube-automation-agent",
   "version": "2.5.0",
   "description": "YouTube Automation Agent is an open-source AI agent that runs a YouTube channel end to end",
-  "main": "index.js",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node index.js",
     "setup": "node setup.js",
@@ -18,6 +18,9 @@
     "agent:publishing": "node agents/publishing-scheduling-agent.js",
     "agent:analytics": "node agents/analytics-optimization-agent.js",
     "credentials:setup": "node utils/credential-manager.js setup",
+    "icons": "node scripts/generate-electron-icons.js",
+    "app": "electron .",
+    "dist": "electron-builder",
     "lint": "eslint ."
   },
   "dependencies": {
@@ -44,10 +47,43 @@
   },
   "devDependencies": {
     "@eslint/js": "9.39.4",
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
     "eslint": "9.39.4",
     "nodemon": "^3.0.2"
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "build": {
+    "appId": "com.tisorr.youtube-automation-agent",
+    "productName": "YouTube Automation Agent",
+    "files": [
+      "**/*",
+      "!reports/**",
+      "!examples/**",
+      "!assets/demo/**",
+      "!scripts/growth/**",
+      "!test.js",
+      "!walkthrough.js"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "node_modules/better-sqlite3/**",
+      "node_modules/sharp/**"
+    ],
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.video",
+      "icon": "electron/assets/icon.icns"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "AudioVideo",
+      "icon": "electron/assets/icon.png"
+    },
+    "win": {
+      "target": ["nsis"]
+    }
   }
 }
