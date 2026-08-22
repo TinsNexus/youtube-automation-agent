@@ -36,7 +36,12 @@ class Database {
     let version = this.db.pragma('user_version', { simple: true });
 
     const migrations = [
-      /* v1 */ async () => { await this.createTables(); }
+      /* v1 */ async () => { await this.createTables(); },
+      // createTables() gained several tables (operator_runs, channel_strategies,
+      // readiness_runs, content_provenance, ...) after some databases had already
+      // reached v1. Every statement in it is CREATE TABLE IF NOT EXISTS, so
+      // re-running it here is a safe, idempotent way to backfill those tables.
+      /* v2 */ async () => { await this.createTables(); }
     ];
 
     for (; version < migrations.length; version++) {
