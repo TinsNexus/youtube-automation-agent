@@ -524,6 +524,25 @@ class SystemTest {
       if (legacyResult !== 'legacy-ok') throw new Error('Legacy fallback did not return content');
       if (attempt !== 2) throw new Error('Expected exactly one retry with max_tokens');
 
+      // Reasoning-style models (gpt-5.x) reject a non-default temperature —
+      // the service must retry the same request with temperature dropped.
+      let tempAttempt = 0;
+      let sawTemperatureOnRetry = false;
+      service.client.chat.completions.create = async (params) => {
+        tempAttempt++;
+        if (tempAttempt === 1) {
+          const err = new Error("Unsupported value: 'temperature' does not support 0.7 with this model. Only the default (1) value is supported.");
+          err.status = 400;
+          throw err;
+        }
+        sawTemperatureOnRetry = 'temperature' in params;
+        return { choices: [{ message: { content: 'temp-ok' } }] };
+      };
+      const tempResult = await service.generateText('temperature prompt');
+      if (tempResult !== 'temp-ok') throw new Error('Temperature fallback did not return content');
+      if (tempAttempt !== 2) throw new Error('Expected exactly one retry with temperature dropped');
+      if (sawTemperatureOnRetry) throw new Error('Retry must not include temperature after the model rejected it');
+
       // An empty model body must surface as a descriptive error, not the cryptic
       // "Unexpected end of JSON input" the agents used to log.
       service.client.chat.completions.create = async () => ({ choices: [{ message: { content: '' } }] });
