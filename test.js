@@ -3,6 +3,8 @@ const { Logger } = require('./utils/logger');
 const { CredentialManager } = require('./utils/credential-manager');
 const chalk = require('chalk');
 const path = require('path');
+const { ProductionReadinessService } = require('./utils/production-readiness-service');
+const { normalizeTags, validateYouTubeMetadata } = require('./utils/youtube-metadata-validator');
 
 class SystemTest {
   constructor() {
@@ -21,6 +23,12 @@ class SystemTest {
       { name: 'Local Activation Metrics', test: () => this.testActivationMetrics() },
       { name: 'Anonymous Telemetry Opt-in', test: () => this.testAnonymousTelemetryOptIn() },
       { name: 'Operator Workflow API', test: () => this.testOperatorWorkflowAPI() },
+      { name: 'Autonomous Channel Operator', test: () => this.testAutonomousChannelOperator() },
+      { name: 'Closed-loop Channel Learning', test: () => this.testChannelLearningLoop() },
+      { name: 'Production Readiness Gate', test: () => this.testProductionReadinessGate() },
+      { name: 'Durable Multi-Provider Video Generation', test: () => this.testVideoProviderLayer() },
+      { name: 'Research and Provenance Desk', test: () => this.testProvenanceDesk() },
+      { name: 'Resumable Generation Checkpoints', test: () => this.testResumableGenerationCheckpoints() },
       { name: 'API Validation and Security', test: () => this.testAPIValidationAndSecurity() },
       { name: 'Publishing Safety', test: () => this.testPublishingSafety() },
       { name: 'Multi-Provider Credential Validation', test: () => this.testCredentialValidation() },
@@ -243,6 +251,7 @@ class SystemTest {
     await db.initialize();
     let server;
     let job;
+    let learningRecommendation;
 
     try {
       job = await db.createGenerationJob({ topic: 'Operator workflow test', style: 'explainer', length: 'short' });
@@ -253,6 +262,7 @@ class SystemTest {
       }
 
       const operator = new OperatorService(db);
+      operator.notify = async () => null;
       const quality = await operator.runQualityChecks({
         script: { title: 'Test title', fullScript: 'x'.repeat(250) },
         seo: { title: 'Test title', description: 'x'.repeat(80), tags: ['one', 'two', 'three'] },
@@ -287,17 +297,780 @@ class SystemTest {
         !response.ok ||
         !Array.isArray(dashboard.jobs) ||
         !Array.isArray(dashboard.pipeline) ||
+        !Array.isArray(dashboard.operatorRuns) ||
         dashboard.activation?.privacy !== 'local-only'
       ) {
         throw new Error('Operator dashboard API did not return its data contract');
       }
+      const unavailableStart = await fetch(`http://127.0.0.1:${port}/api/operator/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+      });
+      if (unavailableStart.status !== 503) {
+        throw new Error('Autonomous operator did not fail closed when its strategy agent was unavailable');
+      }
+
+      learningRecommendation = await db.saveLearningRecommendation({
+        fingerprint: `operator-api-${Date.now()}`,
+        category: 'format',
+        title: 'Test evidence-backed recommendation',
+        rationale: 'Created only for API contract verification.',
+        evidence: { sampleSize: 4 },
+        proposedChange: { target: 'future_plans', prefer: 'tutorial' },
+        confidence: 'medium'
+      });
+      const approveLearning = await fetch(
+        `http://127.0.0.1:${port}/api/learning/recommendations/${learningRecommendation.id}/approve`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+      );
+      const approvedLearning = await approveLearning.json();
+      if (!approveLearning.ok || approvedLearning.result?.status !== 'approved') {
+        throw new Error('Learning recommendation review API did not persist approval');
+      }
     } finally {
       if (server) await new Promise(resolve => server.close(resolve));
       if (job) await db.executeQuery('DELETE FROM generation_jobs WHERE id = ?', [job.id]);
+      if (learningRecommendation) await db.executeQuery('DELETE FROM learning_recommendations WHERE id = ?', [learningRecommendation.id]);
       await db.close();
     }
 
     this.logger.info('Operator workflow API test completed successfully');
+  }
+
+  async testAutonomousChannelOperator() {
+    const { ContentStrategyAgent } = require('./agents/content-strategy-agent');
+    const { AutonomousChannelOperator } = require('./utils/autonomous-channel-operator');
+    const db = new Database();
+    await db.initialize();
+    const previousStrategy = await db.getChannelStrategy();
+    let run;
+    let recoverableJob;
+
+    try {
+      const strategy = await db.saveChannelStrategy({
+        objective: 'Teach small teams to automate useful work',
+        audience: 'Small business operators',
+        valueProposition: 'Practical steps without hype',
+        contentPillars: ['AI workflows', 'Automation playbooks'],
+        cadencePerWeek: 2,
+        videosPerRun: 2,
+        defaultFormat: 'tutorial',
+        defaultLength: 'short',
+        successMetric: 'Returning viewers',
+        constraints: 'Do not invent statistics',
+        status: 'active'
+      });
+      if (strategy.contentPillars.length !== 2 || strategy.cadence_per_week !== 2) {
+        throw new Error('Channel strategy was not persisted correctly');
+      }
+
+      const strategyAgent = new ContentStrategyAgent(db, {});
+      strategyAgent.analyzeTrends = async function() {
+        this.trendingTopics = [{
+          topic: 'practical AI workflows', score: 8, sources: ['trending'],
+          evidence: [{
+            url: 'https://www.youtube.com/watch?v=research123',
+            title: 'Practical AI workflows', publisher: 'Evidence channel', sourceType: 'video'
+          }]
+        }];
+        this.competitorData = [];
+      };
+      const planned = await strategyAgent.researchAndPlanChannel(strategy);
+      if (
+        planned.plan.length !== 2 || !planned.research.sources.includes('YouTube most-popular videos') ||
+        planned.research.sourceCatalog.length !== 1 || planned.plan[0].sourceUrls.length !== 1
+      ) {
+        throw new Error('Strategy did not produce an evidence-labeled autonomous plan');
+      }
+
+      const receivedInputs = [];
+      let resumedJobs = 0;
+      const operator = new AutonomousChannelOperator(db, {
+        researchAndPlan: async () => planned,
+        startGenerationJob: async input => {
+          receivedInputs.push(input);
+          return { id: `fake-job-${receivedInputs.length}` };
+        },
+        waitForGenerationJob: async jobId => ({
+          id: jobId,
+          status: 'completed',
+          production_id: `production-${jobId}`,
+          details: { reviewStatus: 'needs_review' }
+        }),
+        resumeGenerationJob: async jobId => {
+          resumedJobs++;
+          await db.updateGenerationJob(jobId, { status: 'completed', productionId: `production-${jobId}` });
+          return db.getGenerationJob(jobId);
+        }
+      });
+      run = await operator.start(strategy);
+      await operator.activeRuns.get(run.id);
+      const completed = await db.getOperatorRun(run.id);
+      if (
+        completed.status !== 'waiting_review' ||
+        completed.generatedJobs.length !== 2 ||
+        receivedInputs.some(input => input.source !== 'autonomous_operator' || !input.strategyContext?.angle) ||
+        receivedInputs[0].strategyContext.researchSources.length !== 1
+      ) {
+        throw new Error('Autonomous operator did not execute the planned workflow');
+      }
+
+      recoverableJob = await db.createGenerationJob({ topic: planned.plan[0].topic, source: 'autonomous_operator' });
+      await db.updateGenerationJob(recoverableJob.id, { status: 'interrupted', stage: 'script' });
+      const interruptedJobs = completed.generatedJobs.map((item, index) => index === 0
+        ? { ...item, jobId: recoverableJob.id, status: 'interrupted', reviewStatus: null }
+        : item);
+      await db.updateOperatorRun(run.id, {
+        status: 'interrupted',
+        stage: 'producing_1_of_2',
+        progress: 40,
+        generatedJobs: interruptedJobs,
+        error: 'The application restarted before this operator run finished',
+        completedAt: new Date().toISOString()
+      });
+      await operator.resume(run.id, strategy);
+      await operator.activeRuns.get(run.id);
+      const recoveredRun = await db.getOperatorRun(run.id);
+      if (resumedJobs !== 1 || recoveredRun.status !== 'waiting_review' || recoveredRun.generatedJobs[0].status !== 'completed') {
+        throw new Error('Autonomous operator did not continue from its saved plan and interrupted job');
+      }
+    } finally {
+      if (run) {
+        const stored = await db.getOperatorRun(run.id);
+        for (const item of stored?.generatedJobs || []) {
+          if (item.ideaId) await db.executeQuery('DELETE FROM content_ideas WHERE id = ?', [item.ideaId]);
+        }
+        await db.executeQuery('DELETE FROM operator_runs WHERE id = ?', [run.id]);
+      }
+      if (previousStrategy) {
+        await db.saveChannelStrategy({
+          objective: previousStrategy.objective,
+          audience: previousStrategy.audience,
+          valueProposition: previousStrategy.value_proposition,
+          contentPillars: previousStrategy.contentPillars,
+          cadencePerWeek: previousStrategy.cadence_per_week,
+          videosPerRun: previousStrategy.videos_per_run,
+          defaultFormat: previousStrategy.default_format,
+          defaultLength: previousStrategy.default_length,
+          successMetric: previousStrategy.success_metric,
+          constraints: previousStrategy.constraints,
+          status: previousStrategy.status
+        });
+      } else {
+        await db.executeQuery("DELETE FROM channel_strategies WHERE id = 'default'");
+      }
+      if (recoverableJob) await db.executeQuery('DELETE FROM generation_jobs WHERE id = ?', [recoverableJob.id]);
+      await db.close();
+    }
+
+    this.logger.info('Autonomous channel operator test completed successfully');
+  }
+
+  async testChannelLearningLoop() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const { ChannelLearningEngine } = require('./utils/channel-learning-engine');
+    const { ContentStrategyAgent } = require('./agents/content-strategy-agent');
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-learning-'));
+    const db = new Database();
+    db.dbPath = path.join(directory, 'learning.db');
+    await db.initialize();
+
+    try {
+      const learning = new ChannelLearningEngine(db);
+      const report = (videoId, format, performanceScore, ctr, retention, simulated = false) => ({
+        videoId,
+        videoDetails: {
+          title: `${format} automation guide`,
+          publishedAt: new Date(Date.now() - 8 * 86400000).toISOString()
+        },
+        analytics: {
+          simulated,
+          views: { totalViews: 500, totalImpressions: 5000, averageCTR: ctr },
+          watchTime: { averageViewPercentage: retention, averageViewDuration: 240, totalWatchTime: 2000 },
+          engagement: { engagementRate: format === 'tutorial' ? 6 : 2 }
+        },
+        thumbnailMetrics: { impressions: 5000, clickThroughRate: ctr },
+        performance: { score: performanceScore, grade: 'B' }
+      });
+      const context = format => ({
+        strategy: { topic: `${format} topic`, contentType: format, requestedLengthKey: 'medium' },
+        script: { hook: 'A concise opening that immediately promises a useful and concrete result.' },
+        thumbnail: { concept: { composition: 'centered' } }
+      });
+
+      await learning.capture(report('learning-tutorial-1', 'tutorial', 88, 7.5, 62), context('tutorial'), '7d');
+      await learning.capture(report('learning-tutorial-2', 'tutorial', 84, 7, 58), context('tutorial'), '7d');
+      await learning.capture(report('learning-list-1', 'list', 52, 3.5, 39), context('list'), '7d');
+      await learning.capture(report('learning-list-2', 'list', 48, 3, 35), context('list'), '7d');
+      await learning.capture(report('learning-simulated', 'review', 99, 12, 90, true), context('review'), '7d');
+
+      const summary = await learning.getSummary();
+      const recommendation = summary.recommendations.find(item => item.category === 'format');
+      if (summary.measuredVideos !== 4 || !recommendation || !/tutorial/.test(recommendation.title)) {
+        throw new Error('Learning engine did not derive a real-evidence format recommendation');
+      }
+      if (summary.recommendations.some(item => /review/.test(item.title))) {
+        throw new Error('Simulated analytics influenced a learning recommendation');
+      }
+
+      const approved = await db.reviewLearningRecommendation(recommendation.id, 'approved');
+      if (approved.status !== 'approved') throw new Error('Learning recommendation approval was not persisted');
+
+      const strategyAgent = new ContentStrategyAgent(db, {});
+      strategyAgent.analyzeTrends = async function() {
+        this.trendingTopics = [];
+        this.competitorData = [];
+      };
+      const planned = await strategyAgent.researchAndPlanChannel({
+        objective: 'Teach useful automation',
+        audience: 'Small teams',
+        value_proposition: 'Practical guidance',
+        contentPillars: ['Automation'],
+        videos_per_run: 1,
+        default_format: 'tutorial',
+        default_length: 'medium'
+      });
+      if (
+        planned.research.approvedLearnings.length !== 1 ||
+        !planned.research.sources.includes('Operator-approved channel performance learnings')
+      ) {
+        throw new Error('Approved learning was not supplied to autonomous planning');
+      }
+
+      const due = await learning.getDueMeasurementWindows({
+        youtube_id: 'unmeasured-video',
+        published_at: new Date(Date.now() - 8 * 86400000).toISOString()
+      });
+      if (!due.includes('24h') || !due.includes('7d')) {
+        throw new Error('24-hour and 7-day learning windows were not scheduled');
+      }
+
+      const { YouTubeAutomationAgent } = require('./index');
+      const { ThumbnailDesignerAgent } = require('./agents/thumbnail-designer-agent');
+      const workflow = new YouTubeAutomationAgent();
+      const titleVariants = workflow.buildTitleExperimentVariants('Automate Your Weekly Reporting');
+      const selected = workflow.validateEditorData(
+        { selectedTitleVariant: 1, selectedThumbnailVariant: 2 },
+        { packagingExperiment: { titleVariants, thumbnailVariants: [{}, {}, {}] } }
+      );
+      if (titleVariants.length !== 3 || selected.selectedTitleVariant !== 1 || selected.selectedThumbnailVariant !== 2) {
+        throw new Error('Packaging experiment selections were not validated');
+      }
+
+      const thumbnailDesigner = new ThumbnailDesignerAgent(db, {});
+      thumbnailDesigner.createThumbnail = async (_concept, suffix) => `base-${suffix}`;
+      thumbnailDesigner.addTextOverlay = async (_path, _concept, suffix) => `overlay-${suffix}`;
+      thumbnailDesigner.optimizeForYouTube = async (_path, suffix) => `optimized-${suffix}.jpg`;
+      const thumbnailVariants = await thumbnailDesigner.generateABVariants({
+        primaryText: 'GUIDE',
+        colors: { primary: 'blue', secondary: 'white', accent: 'green' },
+        composition: 'split'
+      });
+      if (thumbnailVariants.length !== 3 || thumbnailVariants.some(item => !item.path.endsWith('.jpg'))) {
+        throw new Error('Approved packaging learning did not produce complete thumbnail variants');
+      }
+    } finally {
+      await db.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+
+    this.logger.info('Closed-loop channel learning test completed successfully');
+  }
+
+  async testProductionReadinessGate() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    let savedRun = null;
+    const db = {
+      generateId: () => 'readiness_test',
+      saveReadinessRun: async run => {
+        savedRun = {
+          ...run,
+          started_at: run.startedAt,
+          completed_at: run.completedAt
+        };
+        return savedRun;
+      },
+      getLatestReadinessRun: async () => savedRun
+    };
+    const passingProbe = label => async () => ({ message: `${label} verified` });
+    const service = new ProductionReadinessService(db, { credentials: {} }, {
+      probes: {
+        text: passingProbe('Text'),
+        image: passingProbe('Image'),
+        videoProvider: passingProbe('Video provider'),
+        narration: passingProbe('Narration'),
+        videoAssembly: passingProbe('Video'),
+        youtube: passingProbe('YouTube'),
+        metadata: passingProbe('Metadata')
+      }
+    });
+    const passed = await service.run({ includePaidMedia: true });
+    if (passed.status !== 'passed' || passed.checks.length !== 7 || !savedRun) {
+      throw new Error('A successful readiness run was not persisted correctly');
+    }
+    await service.assertReady('Test automation');
+
+    const failingService = new ProductionReadinessService(db, { credentials: {} }, {
+      probes: {
+        text: passingProbe('Text'),
+        image: passingProbe('Image'),
+        videoProvider: passingProbe('Video provider'),
+        narration: passingProbe('Narration'),
+        videoAssembly: passingProbe('Video'),
+        youtube: async () => { throw new Error('token rejected sk-secret-value'); },
+        metadata: passingProbe('Metadata')
+      }
+    });
+    const failed = await failingService.run();
+    if (failed.status !== 'failed' || failed.blockingFailures[0] !== 'youtube_access') {
+      throw new Error('A blocking readiness probe did not fail closed');
+    }
+    if (failed.checks.find(check => check.id === 'youtube_access').message.includes('sk-secret-value')) {
+      throw new Error('Readiness diagnostics did not redact a provider-shaped secret');
+    }
+    let blocked = false;
+    try {
+      await failingService.assertReady('Test publishing');
+    } catch (error) {
+      blocked = error.status === 409;
+    }
+    if (!blocked) throw new Error('Failed readiness did not block protected automation');
+
+    const tags = normalizeTags(['#Automation', 'automation', 'bad"tag', 'x'.repeat(140)]);
+    const metadata = validateYouTubeMetadata({
+      title: 'A valid title',
+      description: 'A valid upload description.',
+      tags,
+      metadata: { category: 22, language: 'en' }
+    });
+    if (!metadata.valid || tags[0] !== 'Automation' || tags.includes('automation') || tags.some(tag => tag.includes('"') || tag.length > 100)) {
+      throw new Error('YouTube metadata normalization is unsafe or invalid');
+    }
+
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-readiness-db-'));
+    const persistenceDb = new Database();
+    persistenceDb.dbPath = path.join(directory, 'readiness.db');
+    try {
+      await persistenceDb.initialize();
+      await persistenceDb.saveReadinessRun(passed);
+      const persisted = await persistenceDb.getLatestReadinessRun();
+      if (persisted?.id !== passed.id || persisted.checks.length !== 7 || persisted.summary.passed !== 7) {
+        throw new Error('Readiness evidence did not round-trip through SQLite');
+      }
+    } finally {
+      await persistenceDb.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+    this.logger.info('Production readiness gate test completed successfully');
+  }
+
+  async testVideoProviderLayer() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const { runFFmpeg, checkFFmpeg } = require('./utils/ffmpeg');
+    const { MediaGenerationService } = require('./utils/media-generation-service');
+    const {
+      VideoProvider, VideoProviderRegistry, SeedanceProvider, MiniMaxH3Provider,
+      GoogleOmniProvider, KlingProvider, WanProvider
+    } = require('./utils/video-providers');
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-media-provider-'));
+    const db = new Database();
+    db.dbPath = path.join(directory, 'media.db');
+    await db.initialize();
+    const job = await db.createGenerationJob({ topic: 'Provider durability test' });
+    const source = path.join(directory, 'source.mp4');
+    let createCalls = 0;
+    let pollCalls = 0;
+
+    try {
+      if (!(await checkFFmpeg())) {
+        this.logger.warn('Skipping provider MP4 durability assertion because FFmpeg is unavailable');
+        return;
+      }
+      await runFFmpeg(['-y', '-f', 'lavfi', '-i', 'color=c=red:s=320x180:d=1', '-c:v', 'mpeg4', source]);
+      const fake = new VideoProvider('seedance', {
+        model: 'bytedance/seedance-2.5',
+        capabilities: { minDuration: 4, maxDuration: 30, cancellation: true }
+      });
+      fake.isAvailable = () => true;
+      fake.createTask = async () => {
+        createCalls++;
+        return { externalTaskId: 'prediction-1', status: 'queued' };
+      };
+      fake.getTask = async id => {
+        pollCalls++;
+        return { externalTaskId: id, status: 'succeeded', outputUrl: 'fake://video' };
+      };
+      fake.downloadResult = async (_task, outputPath) => {
+        await fs.copyFile(source, outputPath);
+        return outputPath;
+      };
+      const registry = new VideoProviderRegistry({}, { providers: { seedance: fake } });
+      const service = new MediaGenerationService(db, {}, { registry, pollIntervalMs: 10, sleep: async () => {} });
+      const output = path.join(directory, 'output.mp4');
+      const input = {
+        jobId: job.id,
+        productionId: 'prod-provider-test',
+        scene: { index: 0 },
+        provider: fake,
+        outputPath: output,
+        request: { prompt: 'A red frame', duration: 4, resolution: '720p', aspectRatio: '16:9' }
+      };
+      const first = await service.generateClip(input);
+      const second = await service.generateClip(input);
+      const tasks = await db.listMediaGenerationTasks(job.id);
+      if (createCalls !== 1 || pollCalls !== 1 || !second.reused || tasks.length !== 1) {
+        throw new Error('A completed provider task was duplicated instead of being reused');
+      }
+      if (first.task.external_task_id !== 'prediction-1' || tasks[0].model !== 'bytedance/seedance-2.5') {
+        throw new Error('Provider task identity and model evidence did not persist');
+      }
+      const providers = registry.list();
+      for (const id of ['seedance', 'minimax_h3', 'google_omni', 'kling', 'wan', 'slideshow']) {
+        if (!providers.find(provider => provider.id === id)) throw new Error(`Missing video provider: ${id}`);
+      }
+      const shortOnly = new VideoProvider('wan', { model: 'wan-test', capabilities: { minDuration: 2, maxDuration: 15, firstFrame: true } });
+      shortOnly.isAvailable = () => true;
+      const routed = new VideoProviderRegistry({}, { providers: { seedance: fake, wan: shortOnly } });
+      if (routed.select('auto', ['wan', 'seedance'], { duration: 20 }).id !== 'seedance') {
+        throw new Error('Automatic video routing ignored the requested duration capability');
+      }
+      if (routed.select('auto', ['seedance', 'wan'], { duration: 8, generateAudio: true }).id !== 'slideshow') {
+        throw new Error('Automatic video routing selected a provider without requested native audio support');
+      }
+      const listedJob = (await db.listGenerationJobs(10)).find(item => item.id === job.id);
+      if (listedJob?.mediaTasks?.length !== 1 || listedJob.mediaTasks[0].external_task_id !== 'prediction-1') {
+        throw new Error('Generation job history did not expose its durable provider task');
+      }
+
+      let seedanceSubmission;
+      const seedance = new SeedanceProvider({}, { client: { predictions: {
+        create: async submission => {
+          seedanceSubmission = submission;
+          return { id: 'seedance-task', status: 'starting' };
+        }
+      } } });
+      const seedanceTask = await seedance.createTask({ prompt: 'Seedance scene', duration: 30, aspectRatio: '16:9' });
+      if (seedanceTask.externalTaskId !== 'seedance-task' || seedanceSubmission.model !== 'bytedance/seedance-2.5' || seedanceSubmission.input.duration !== 30) {
+        throw new Error('Seedance adapter did not submit the expected Replicate task');
+      }
+      const fileOutput = seedance.normalizeTask({ id: 'file-output', status: 'succeeded', output: { url: () => new URL('https://example.com/video.mp4') } });
+      if (fileOutput.outputUrl !== 'https://example.com/video.mp4') throw new Error('Seedance FileOutput was not normalized');
+
+      let minimaxBody;
+      const minimax = new MiniMaxH3Provider({}, { apiKey: 'test', http: {
+        post: async (_url, body) => { minimaxBody = body; return { data: { task_id: 'h3-task' } }; }
+      } });
+      const minimaxTask = await minimax.createTask({ prompt: 'H3 scene', duration: 15, resolution: '2K', aspectRatio: '9:16' });
+      if (minimaxTask.externalTaskId !== 'h3-task' || minimaxBody.model !== 'MiniMax-H3' || minimaxBody.content[0].type !== 'text') {
+        throw new Error('MiniMax H3 adapter did not submit the expected multimodal task');
+      }
+
+      let googleName;
+      const google = new GoogleOmniProvider({}, { client: {
+        interactions: { create: async () => ({ id: 'omni-task', output_video: { uri: 'https://generativelanguage.googleapis.com/v1beta/files/omni-file:download?alt=media' } }) },
+        files: { get: async ({ name }) => { googleName = name; return { state: { name: 'ACTIVE' } }; } }
+      } });
+      const googleTask = await google.createTask({ prompt: 'Omni scene', aspectRatio: '16:9' });
+      await google.getTask(googleTask.externalTaskId);
+      if (googleTask.status !== 'queued' || googleName !== 'files/omni-file') throw new Error('Gemini Omni URI task was not normalized for polling');
+
+      let klingBody;
+      const kling = new KlingProvider({}, { accessKey: 'access', secretKey: 'secret', http: {
+        post: async (_url, body) => { klingBody = body; return { data: { data: { task_id: 'kling-task' } } }; }
+      } });
+      const klingTask = await kling.createTask({ prompt: 'Kling scene', duration: 8, aspectRatio: '16:9' });
+      if (klingTask.externalTaskId !== 'kling-task' || klingBody.model_name !== 'kling-v3-omni' || klingBody.sound !== 'off') {
+        throw new Error('Kling adapter did not submit the expected task');
+      }
+
+      let wanBody;
+      const wan = new WanProvider({}, { apiKey: 'test', http: {
+        post: async (_url, body) => { wanBody = body; return { data: { output: { task_id: 'wan-task' } } }; }
+      } });
+      const wanTask = await wan.createTask({ prompt: 'Wan scene', duration: 10, resolution: '720p', aspectRatio: '16:9' });
+      if (wanTask.externalTaskId !== 'wan-task' || wanBody.model !== 'wan2.7-t2v-2026-06-12' || wanBody.parameters.resolution !== '720P') {
+        throw new Error('Wan adapter did not submit the expected task-specific model payload');
+      }
+    } finally {
+      await db.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+    this.logger.info('Durable multi-provider video generation test completed successfully');
+  }
+
+  async testProvenanceDesk() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const { ProvenanceService } = require('./utils/provenance-service');
+    const { OperatorService } = require('./utils/operator-service');
+    const { PublishingSchedulingAgent } = require('./agents/publishing-scheduling-agent');
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-provenance-'));
+    const db = new Database();
+    db.dbPath = path.join(directory, 'provenance.db');
+    await db.initialize();
+    const productionId = 'prod-provenance-test';
+    const videoPath = path.join(directory, 'video.mp4');
+    await fs.writeFile(videoPath, Buffer.from('test-video'));
+
+    try {
+      await db.saveProductionData({
+        id: productionId,
+        status: 'needs_review',
+        assets: { finalVideo: { path: videoPath, simulated: false } },
+        timeline: {}, scheduledPublishTime: new Date(Date.now() + 86400000).toISOString(),
+        priority: 50, estimatedDuration: '1:00'
+      });
+      const production = {
+        id: productionId,
+        strategy: {
+          topic: 'Evidence-aware automation',
+          researchSources: [{
+            url: 'https://example.com/research/fact',
+            title: 'Official research evidence',
+            publisher: 'Example Institute',
+            sourceType: 'official'
+          }]
+        },
+        script: {
+          title: 'Evidence-aware automation',
+          fullScript: 'A sufficiently detailed script with a factual statement that must be reviewed before this production can be approved.'.repeat(3),
+          claims: [{
+            text: 'The documented workflow reduces repeated manual steps.',
+            riskLevel: 'standard',
+            sourceUrls: ['https://example.com/research/fact']
+          }]
+        },
+        seo: {
+          title: 'Evidence-aware automation',
+          description: 'A detailed description of an evidence-aware automation workflow for careful channel operators.',
+          tags: ['automation', 'evidence', 'workflow']
+        },
+        assets: { finalVideo: { path: videoPath, simulated: false } }
+      };
+      await db.saveProductionSnapshot(production);
+
+      const provenanceService = new ProvenanceService(db);
+      const initialized = await provenanceService.initialize(productionId, production);
+      if (
+        initialized.status !== 'blocked' || initialized.sources.length !== 1 ||
+        initialized.claims.length !== 1 || initialized.claims[0].sourceIds.length !== 1
+      ) {
+        throw new Error('Generated research sources and claims were not initialized as unresolved provenance');
+      }
+
+      const publishGuard = new PublishingSchedulingAgent(db, {});
+      publishGuard.publishQueue = [{ productionId, status: 'scheduled', metadata: {} }];
+      let blockedPublishRejected = false;
+      try {
+        await publishGuard.publishContent(productionId);
+      } catch (error) {
+        blockedPublishRejected = error.code === 'PROVENANCE_BLOCKED';
+      }
+      if (!blockedPublishRejected) throw new Error('Publishing did not independently enforce the provenance gate');
+
+      let unverifiedSupportRejected = false;
+      try {
+        await provenanceService.review(productionId, {
+          sources: initialized.sources,
+          claims: [{ ...initialized.claims[0], status: 'supported' }]
+        });
+      } catch (error) {
+        unverifiedSupportRejected = /verified source/.test(error.message);
+      }
+      if (!unverifiedSupportRejected) throw new Error('A claim was supported without reviewer-verified evidence');
+
+      const reviewed = await provenanceService.review(productionId, {
+        sources: initialized.sources.map(source => ({ ...source, status: 'verified' })),
+        claims: [{ ...initialized.claims[0], status: 'supported' }],
+        containsSyntheticMedia: true
+      });
+      if (reviewed.status !== 'verified' || !reviewed.containsSyntheticMedia || reviewed.summary.unresolvedClaims !== 0) {
+        throw new Error('A complete evidence review was not persisted as verified');
+      }
+
+      const bundle = await db.getProductionBundle(productionId);
+      const quality = await new OperatorService(db).runQualityChecks({ ...production, provenance: bundle.provenance }, {});
+      if (!quality.passed || !quality.checks.find(check => check.id === 'provenance' && check.passed)) {
+        throw new Error('Verified provenance did not satisfy the production quality gate');
+      }
+
+      let uploadRequest;
+      const publishing = new PublishingSchedulingAgent(db, {});
+      publishing.youtube = {
+        videos: { insert: async request => { uploadRequest = request; return { data: { id: 'provenance-video' } }; } }
+      };
+      await publishing.uploadToYouTube({
+        publishTime: new Date(Date.now() + 86400000).toISOString(),
+        metadata: {
+          seo: production.seo,
+          video: { path: videoPath },
+          privacyStatus: 'private',
+          containsSyntheticMedia: true
+        }
+      });
+      if (uploadRequest?.requestBody?.status?.containsSyntheticMedia !== true) {
+        throw new Error('Synthetic-media disclosure was not handed to the YouTube upload request');
+      }
+
+      let emptyWaiverRejected = false;
+      try {
+        new ProvenanceService(db).build({
+          sources: reviewed.sources,
+          claims: [{ ...reviewed.claims[0], status: 'waived', notes: '' }]
+        });
+      } catch (error) {
+        emptyWaiverRejected = /reviewer note/.test(error.message);
+      }
+      if (!emptyWaiverRejected) throw new Error('A claim waiver without a reviewer note was accepted');
+    } finally {
+      await db.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+
+    this.logger.info('Research and provenance desk test completed successfully');
+  }
+
+  async testResumableGenerationCheckpoints() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const { YouTubeAutomationAgent } = require('./index');
+    const { GenerationRecoveryService } = require('./utils/generation-recovery-service');
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-recovery-'));
+    const db = new Database();
+    db.dbPath = path.join(directory, 'recovery.db');
+    await db.initialize();
+
+    const thumbnailPath = path.join(directory, 'thumbnail.jpg');
+    const videoPath = path.join(directory, 'video.mp4');
+    await fs.writeFile(thumbnailPath, Buffer.from('thumbnail'));
+    await fs.writeFile(videoPath, Buffer.from('video'));
+    const strategy = {
+      topic: 'Checkpointed automation',
+      contentType: 'Tutorial',
+      requestedStyle: 'tutorial',
+      requestedLengthKey: 'short'
+    };
+    const script = {
+      title: 'Checkpointed automation',
+      fullScript: 'A complete script that can be reused after an interrupted generation run.',
+      mainContent: [{ text: 'Reusable content' }]
+    };
+    let strategyCalls = 0;
+    let scriptCalls = 0;
+    let productionCalls = 0;
+
+    try {
+      const agent = new YouTubeAutomationAgent();
+      agent.db = db;
+      agent.recovery = new GenerationRecoveryService(db, {
+        logger: agent.logger,
+        baseDelayMs: 0,
+        updateJobStage: (...args) => agent.updateJobStage(...args)
+      });
+      agent.readiness = { assertReady: async () => true };
+      agent.operator = {
+        runQualityChecks: async () => ({ passed: true, score: 100, checks: [{ passed: true }], blockingFailures: [] }),
+        notify: async () => null
+      };
+      agent.agents = {
+        strategy: { generateContentStrategy: async () => { strategyCalls++; return strategy; } },
+        scriptWriter: { generateScript: async () => { scriptCalls++; return script; } },
+        thumbnailDesigner: { generateThumbnail: async () => ({ path: thumbnailPath, concept: {} }) },
+        seoOptimizer: { optimize: async () => ({ title: script.title, description: 'A complete description.', tags: ['automation'] }) },
+        production: {
+          processContent: async input => {
+            productionCalls++;
+            return {
+              id: `recovery-production-${Date.now()}`,
+              status: 'ready',
+              ...input,
+              assets: {
+                finalVideo: { path: videoPath, simulated: false },
+                thumbnail: { path: thumbnailPath }
+              },
+              timeline: {},
+              scheduledPublishTime: new Date(Date.now() + 86400000).toISOString(),
+              priority: 50,
+              estimatedDuration: '2:00'
+            };
+          }
+        },
+        publishing: { scheduleContent: async () => null }
+      };
+
+      const job = await db.createGenerationJob({
+        topic: strategy.topic,
+        style: 'tutorial',
+        length: 'short',
+        source: 'manual',
+        strategyContext: { objective: 'Test recovery' }
+      });
+      await db.saveGenerationCheckpoint(job.id, 'strategy', {
+        status: 'completed', artifact: strategy, completedAt: new Date().toISOString()
+      });
+      await db.saveGenerationCheckpoint(job.id, 'script', {
+        status: 'completed', artifact: script, completedAt: new Date().toISOString()
+      });
+      await db.updateGenerationJob(job.id, { status: 'running', stage: 'thumbnail', progress: 40 });
+      await db.markInterruptedJobs();
+      const interrupted = await db.getGenerationJob(job.id);
+      if (interrupted.status !== 'interrupted' || interrupted.stage !== 'thumbnail') {
+        throw new Error('Restart recovery did not preserve the interrupted stage');
+      }
+
+      const resumed = await agent.resumeGenerationJob(job.id);
+      if (resumed.details?.resumeFrom !== 'thumbnail') {
+        throw new Error('Resume did not select the first incomplete stage');
+      }
+      await agent.waitForGenerationJob(job.id);
+      const completed = await db.getGenerationJob(job.id);
+      const checkpoints = await db.listGenerationCheckpoints(job.id);
+      if (
+        completed.status !== 'completed' ||
+        checkpoints.filter(item => item.status === 'completed').length !== 6 ||
+        strategyCalls !== 0 || scriptCalls !== 0 || productionCalls !== 1 ||
+        !completed.details.reusedStages.includes('strategy') || !completed.details.reusedStages.includes('script')
+      ) {
+        throw new Error('Generation did not resume from verified checkpoints');
+      }
+
+      let transientAttempts = 0;
+      const transientJob = await db.createGenerationJob({ topic: 'Transient retry' });
+      const recovered = await agent.recovery.run(transientJob.id, 'strategy', 10, async () => {
+        transientAttempts++;
+        if (transientAttempts === 1) {
+          const error = new Error('Temporary provider failure');
+          error.status = 503;
+          throw error;
+        }
+        return { topic: 'Recovered strategy' };
+      });
+      const transientCheckpoint = await db.getGenerationCheckpoint(transientJob.id, 'strategy');
+      if (recovered.topic !== 'Recovered strategy' || transientAttempts !== 2 || transientCheckpoint.attempt_count !== 2) {
+        throw new Error('A retry-safe transient stage failure was not recovered with bounded attempts');
+      }
+
+      const invalidJob = await db.createGenerationJob({ topic: 'Invalid dependency' });
+      await db.saveGenerationCheckpoint(invalidJob.id, 'strategy', {
+        status: 'completed', artifact: {}, completedAt: new Date().toISOString()
+      });
+      await db.saveGenerationCheckpoint(invalidJob.id, 'script', {
+        status: 'completed', artifact: script, completedAt: new Date().toISOString()
+      });
+      await agent.recovery.run(invalidJob.id, 'strategy', 10, async () => ({ topic: 'Rebuilt dependency' }));
+      if (await db.getGenerationCheckpoint(invalidJob.id, 'script')) {
+        throw new Error('A stale downstream checkpoint survived invalid upstream artifact recovery');
+      }
+    } finally {
+      await db.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+
+    this.logger.info('Resumable generation checkpoints test completed successfully');
   }
 
   async testAPIValidationAndSecurity() {
@@ -431,6 +1204,61 @@ class SystemTest {
       throw new Error('getVideoStream did not reject a missing video file');
     }
 
+    let uncertainUpdates = [];
+    const uncertain = new PublishingSchedulingAgent({
+      updateScheduleEntry: async entry => uncertainUpdates.push({ ...entry })
+    }, {});
+    uncertain.publishQueue = [
+      { id: 'schedule-uncertain', productionId: 'prod-uncertain', title: 'Uncertain', status: 'scheduled', metadata: {} }
+    ];
+    let uploadAttempts = 0;
+    uncertain.uploadToYouTube = async entry => {
+      uploadAttempts++;
+      entry.uploadAttempted = true;
+      const error = new Error('socket closed during upload');
+      error.code = 'ECONNRESET';
+      throw error;
+    };
+    let uncertainBlocked = false;
+    try {
+      await uncertain.publishContent('prod-uncertain');
+    } catch (error) {
+      uncertainBlocked = error.code === 'UPLOAD_OUTCOME_UNKNOWN';
+    }
+    try {
+      await uncertain.publishContent('prod-uncertain');
+    } catch (error) {
+      uncertainBlocked = uncertainBlocked && error.code === 'UPLOAD_OUTCOME_UNKNOWN';
+    }
+    if (!uncertainBlocked || uploadAttempts !== 1 || uncertainUpdates.at(-1)?.status !== 'reconciliation_required') {
+      throw new Error('An uncertain upload outcome was retried or failed to require reconciliation');
+    }
+
+    let reconciliationCalls = 0;
+    const recorded = {
+      id: 'schedule-recorded', productionId: 'prod-recorded', title: 'Recorded', status: 'uploaded',
+      youtubeId: 'youtube-existing', metadata: {}
+    };
+    const reconcile = new PublishingSchedulingAgent({
+      getLatestScheduleEntry: async () => recorded,
+      updateScheduleEntry: async () => {}
+    }, {});
+    reconcile.youtube = {
+      videos: {
+        list: async () => {
+          reconciliationCalls++;
+          return { data: { items: [{ id: 'youtube-existing' }] } };
+        }
+      }
+    };
+    reconcile.uploadToYouTube = async () => {
+      throw new Error('A recorded upload must never be uploaded again');
+    };
+    const reconciled = await reconcile.publishContent('prod-recorded');
+    if (reconciled.status !== 'published' || reconciliationCalls !== 1) {
+      throw new Error('A recorded YouTube upload was not reconciled idempotently');
+    }
+
     this.logger.info('Publishing safety test completed successfully');
   }
 
@@ -554,6 +1382,28 @@ class SystemTest {
       }
       if (!emptyRejected) {
         throw new Error('Empty response was not rejected with a descriptive error');
+      }
+
+      // Gemini 3.5+ rejects/deprecates sampling parameters. Keep the latest
+      // Gemini default on the parameter-safe request path.
+      const geminiCalls = [];
+      const geminiService = Object.create(AITextService.prototype);
+      geminiService.gemini = {
+        models: {
+          generateContent: async (params) => {
+            geminiCalls.push(params);
+            return { text: 'gemini-ok' };
+          }
+        }
+      };
+      geminiService.client = null;
+      geminiService.model = 'gemini-3.7-flash';
+      geminiService.providerName = 'Google Gemini';
+
+      const geminiResult = await geminiService.generateText('gemini prompt', { temperature: 0.2 });
+      if (geminiResult !== 'gemini-ok') throw new Error('Gemini generation did not return content');
+      if (geminiCalls[0].config.temperature !== undefined) {
+        throw new Error('Gemini 3.7 must not receive the deprecated temperature parameter');
       }
     } finally {
       if (savedEnv === undefined) delete process.env.OPENAI_API_KEY;
@@ -694,6 +1544,9 @@ class SystemTest {
         stills.push(stillPath);
       }
 
+      if (generator.parseDurationSeconds('2:05') !== 125 || generator.parseDurationSeconds('1:02:03') !== 3723) {
+        throw new Error('Human-readable production durations are not converted to timeline seconds');
+      }
       const videoPath = path.join(dir, 'out.mp4');
       await generator.renderSlidesToVideo(stills, 6, videoPath);
 
@@ -709,6 +1562,14 @@ class SystemTest {
       if (!finalStats.size) {
         throw new Error('Silent-audio fallback did not produce a video');
       }
+
+      const hybridPath = path.join(dir, 'hybrid.mp4');
+      await generator.renderMediaTimeline([
+        { type: 'video', path: videoPath, duration: 1 },
+        { type: 'image', path: stills[0], duration: 1 }
+      ], hybridPath);
+      const hybridStats = await fs.stat(hybridPath);
+      if (!hybridStats.size) throw new Error('Hybrid provider/still timeline did not produce a video');
     } finally {
       await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
     }
@@ -739,8 +1600,8 @@ class SystemTest {
   }
 
   async testWalkthroughModule() {
-    const { SetupWalkthrough, AI_PROVIDER_GUIDE } = require('./walkthrough');
-    const { PROVIDERS } = require('./utils/ai-text-service');
+    const { SetupWalkthrough, AI_PROVIDER_GUIDE, VIDEO_PROVIDER_GUIDE } = require('./walkthrough');
+    const { PROVIDERS, GEMINI_MODELS, GEMINI_DEFAULT_MODEL } = require('./utils/ai-text-service');
 
     const walkthrough = new SetupWalkthrough();
     if (typeof walkthrough.run !== 'function') {
@@ -783,6 +1644,42 @@ class SystemTest {
           }
         }
       }
+    }
+
+    if (
+      JSON.stringify(AI_PROVIDER_GUIDE.gemini.models) !== JSON.stringify(GEMINI_MODELS) ||
+      AI_PROVIDER_GUIDE.gemini.defaultModel !== GEMINI_DEFAULT_MODEL
+    ) {
+      throw new Error('Walkthrough Gemini models drifted from the runtime catalog');
+    }
+
+    for (const id of Object.keys(PROVIDERS)) {
+      if (JSON.stringify(AI_PROVIDER_GUIDE[id].models) !== JSON.stringify(PROVIDERS[id].models)) {
+        throw new Error(`Walkthrough provider "${id}" models drifted from the runtime catalog`);
+      }
+    }
+
+    for (const id of ['slideshow', 'seedance', 'minimax_h3', 'google_omni', 'kling', 'wan']) {
+      const guide = VIDEO_PROVIDER_GUIDE[id];
+      if (!guide?.label) throw new Error(`Walkthrough is missing video provider "${id}"`);
+      if (id !== 'slideshow') {
+        const credentials = {};
+        guide.save(credentials, 'test-key', 'test-secret');
+        if (!Object.keys(credentials).length || !guide.keyUrl || !guide.credentialName) {
+          throw new Error(`Video provider guide "${id}" cannot save its credentials`);
+        }
+      }
+    }
+
+    const currentOpenRouterModels = [
+      'openai/gpt-5.6-sol',
+      'anthropic/claude-fable-5',
+      'google/gemini-3.7-flash',
+      'moonshotai/kimi-k3',
+      'z-ai/glm-5.3'
+    ];
+    if (JSON.stringify(PROVIDERS.openrouter.models) !== JSON.stringify(currentOpenRouterModels)) {
+      throw new Error('OpenRouter curated models are not the verified current catalog');
     }
 
     this.logger.info('Walkthrough module test completed successfully');

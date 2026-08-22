@@ -3,6 +3,7 @@ const fs = require('fs').promises;
 const fsSync = require('fs');
 const path = require('path');
 const { Logger } = require('../utils/logger');
+const { assertValidYouTubeMetadata } = require('../utils/youtube-metadata-validator');
 
 // Documented YouTube Data API v3 costs, in quota units.
 const QUOTA_COST = { insert: 1600, thumbnail: 50, captions: 400 };
@@ -54,6 +55,15 @@ class PublishingSchedulingAgent {
       }
 
       this.logger.info(`Scheduling content: ${productionData.id}`);
+      const existing = await this.db.getLatestScheduleEntry?.(productionData.id);
+      if (existing) {
+        if (['scheduled', 'paused'].includes(existing.status) && !this.publishQueue.some(entry => entry.id === existing.id)) {
+          this.publishQueue.push(existing);
+          this.publishQueue.sort((a, b) => new Date(a.publishTime) - new Date(b.publishTime));
+        }
+        this.logger.info(`Reusing existing ${existing.status} schedule entry for: ${productionData.id}`);
+        return existing;
+      }
 
       const scheduleEntry = {
         productionId: productionData.id,
@@ -66,18 +76,18 @@ class PublishingSchedulingAgent {
           thumbnail: productionData.assets.thumbnail,
           video: productionData.assets.finalVideo,
           captions: productionData.assets.captions,
-          privacyStatus: productionData.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private'
+          privacyStatus: productionData.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private',
+          containsSyntheticMedia: productionData.containsSyntheticMedia === true
         },
         createdAt: new Date().toISOString()
       };
       
-      this.publishQueue.push(scheduleEntry);
+      const saved = await this.db.saveScheduleEntry(scheduleEntry) || scheduleEntry;
+      this.publishQueue.push(saved);
       this.publishQueue.sort((a, b) => new Date(a.publishTime) - new Date(b.publishTime));
       
-      await this.db.saveScheduleEntry(scheduleEntry);
-      
-      this.logger.info(`Content scheduled for: ${scheduleEntry.publishTime}`);
-      return scheduleEntry;
+      this.logger.info(`Content scheduled for: ${saved.publishTime}`);
+      return saved;
     } catch (error) {
       this.logger.error('Failed to schedule content:', error);
       throw error;
@@ -86,18 +96,71 @@ class PublishingSchedulingAgent {
 
   async publishContent(contentId) {
     try {
+      if (this.db.getLatestReadinessRun) {
+        const readiness = await this.db.getLatestReadinessRun();
+        if (readiness?.status === 'failed') {
+          const failures = readiness.checks
+            .filter(check => check.blocking && check.status === 'failed')
+            .map(check => check.id);
+          const error = new Error(`Publishing is blocked by the production readiness gate. Fix ${failures.join(', ')} and run the check again.`);
+          error.status = 409;
+          error.code = 'READINESS_BLOCKED';
+          throw error;
+        }
+      }
+      if (this.db.getProductionBundle) {
+        const bundle = await this.db.getProductionBundle(contentId);
+        if (bundle && !['verified', 'not_required'].includes(bundle.provenance?.status || 'not_required')) {
+          const error = new Error('Publishing is blocked until every factual claim is supported or explicitly waived');
+          error.status = 409;
+          error.code = 'PROVENANCE_BLOCKED';
+          throw error;
+        }
+      }
       this.logger.info(`Publishing content: ${contentId}`);
       
-      const scheduleEntry = this.publishQueue.find(entry => 
+      let scheduleEntry = this.publishQueue.find(entry =>
         entry.productionId === contentId || entry.id === contentId
       );
+      if (!scheduleEntry && this.db.getLatestScheduleEntry) {
+        scheduleEntry = await this.db.getLatestScheduleEntry(contentId);
+      }
       
       if (!scheduleEntry) {
         throw new Error(`Content not found in queue: ${contentId}`);
       }
+      if (scheduleEntry.status === 'published') return scheduleEntry;
+      if (scheduleEntry.youtubeId) {
+        return this.reconcileUploadedVideo(scheduleEntry);
+      }
+      if (['uploading', 'reconciliation_required'].includes(scheduleEntry.status)) {
+        const error = new Error('A previous upload may have reached YouTube without returning a video ID. Reconcile the channel before attempting another upload.');
+        error.status = 409;
+        error.code = 'UPLOAD_OUTCOME_UNKNOWN';
+        throw error;
+      }
+
+      scheduleEntry.status = 'uploading';
+      scheduleEntry.error = null;
+      await this.db.updateScheduleEntry(scheduleEntry);
       
-      // Upload video to YouTube
-      const uploadResult = await this.uploadToYouTube(scheduleEntry);
+      let uploadResult;
+      try {
+        uploadResult = await this.uploadToYouTube(scheduleEntry);
+      } catch (error) {
+        if (scheduleEntry.uploadAttempted && this.isUploadOutcomeUnknown(error)) {
+          scheduleEntry.status = 'reconciliation_required';
+          scheduleEntry.error = 'Upload outcome is unknown; verify the YouTube channel before retrying';
+          await this.db.updateScheduleEntry(scheduleEntry);
+          error.code = 'UPLOAD_OUTCOME_UNKNOWN';
+          error.status = 409;
+        } else {
+          scheduleEntry.status = 'failed';
+          scheduleEntry.error = error.message;
+          await this.db.updateScheduleEntry(scheduleEntry);
+        }
+        throw error;
+      }
 
       // Update database
       scheduleEntry.status = 'published';
@@ -149,18 +212,24 @@ class PublishingSchedulingAgent {
       throw error;
     }
 
+    const validation = assertValidYouTubeMetadata(metadata.seo);
+    if (validation.warnings.length) {
+      this.logger.warn(`YouTube metadata warnings: ${validation.warnings.join(' ')}`);
+    }
+    const safeMetadata = validation.value;
+
     const scheduled = scheduleEntry.publishTime
       && new Date(scheduleEntry.publishTime).getTime() > Date.now();
 
     // Prepare video metadata
     const videoMetadata = {
       snippet: {
-        title: metadata.seo.title,
-        description: metadata.seo.description,
-        tags: metadata.seo.tags,
-        categoryId: String(metadata.seo?.metadata?.category ?? 22),
-        defaultLanguage: metadata.seo?.metadata?.language || 'en',
-        defaultAudioLanguage: metadata.seo?.metadata?.language || 'en'
+        title: safeMetadata.title,
+        description: safeMetadata.description,
+        tags: safeMetadata.tags,
+        categoryId: safeMetadata.categoryId,
+        defaultLanguage: safeMetadata.defaultLanguage,
+        defaultAudioLanguage: safeMetadata.defaultAudioLanguage
       },
       status: {
         // publishAt is only valid when privacyStatus is 'private'
@@ -168,22 +237,30 @@ class PublishingSchedulingAgent {
           ? 'private'
           : (metadata.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private'),
         ...(scheduled ? { publishAt: scheduleEntry.publishTime } : {}),
-        selfDeclaredMadeForKids: false
+        selfDeclaredMadeForKids: false,
+        containsSyntheticMedia: metadata.containsSyntheticMedia === true
       }
     };
     
-    // Upload video file
+    // Resolve the file before marking the network upload as attempted.
+    const videoStream = await this.getVideoStream(metadata.video.path);
+    scheduleEntry.uploadAttempted = true;
     const videoUpload = await this.youtube.videos.insert({
       part: 'snippet,status',
       requestBody: videoMetadata,
       media: {
-        body: await this.getVideoStream(metadata.video.path)
+        body: videoStream
       }
     });
     
     const videoId = videoUpload.data.id;
     this.logger.info(`Video uploaded with ID: ${videoId}`);
     await this.db.addQuotaUsage(QUOTA_COST.insert);
+    scheduleEntry.status = 'uploaded';
+    scheduleEntry.youtubeId = videoId;
+    scheduleEntry.youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    scheduleEntry.error = null;
+    await this.db.updateScheduleEntry(scheduleEntry);
 
     const warnings = [];
 
@@ -202,6 +279,32 @@ class PublishingSchedulingAgent {
     }
 
     return { ...videoUpload.data, warnings };
+  }
+
+  isUploadOutcomeUnknown(error) {
+    const status = Number(error.status || error.response?.status || 0);
+    return !status || status >= 500;
+  }
+
+  async reconcileUploadedVideo(scheduleEntry) {
+    const response = await this.youtube.videos.list({ part: 'id,status', id: scheduleEntry.youtubeId });
+    if (!response.data.items?.some(video => video.id === scheduleEntry.youtubeId)) {
+      scheduleEntry.status = 'reconciliation_required';
+      scheduleEntry.error = 'The recorded YouTube video ID could not be verified';
+      await this.db.updateScheduleEntry(scheduleEntry);
+      const error = new Error('The recorded upload could not be verified on YouTube. Resolve it before attempting another upload.');
+      error.status = 409;
+      error.code = 'UPLOAD_OUTCOME_UNKNOWN';
+      throw error;
+    }
+    scheduleEntry.status = 'published';
+    scheduleEntry.publishedAt = scheduleEntry.publishedAt || new Date().toISOString();
+    scheduleEntry.youtubeUrl = scheduleEntry.youtubeUrl || `https://www.youtube.com/watch?v=${scheduleEntry.youtubeId}`;
+    scheduleEntry.error = null;
+    await this.db.updateScheduleEntry(scheduleEntry);
+    this.publishQueue = this.publishQueue.filter(entry => entry.productionId !== scheduleEntry.productionId);
+    this.logger.success(`Reconciled existing YouTube upload: ${scheduleEntry.youtubeUrl}`);
+    return scheduleEntry;
   }
 
   async getVideoStream(videoPath) {
@@ -285,11 +388,17 @@ class PublishingSchedulingAgent {
         await this.publishContent(entry.productionId);
         this.logger.info(`Auto-published: ${entry.title}`);
       } catch (error) {
+        if (error.code === 'READINESS_BLOCKED') {
+          this.logger.warn(error.message);
+          continue;
+        }
         this.logger.error(`Failed to auto-publish ${entry.title}:`, error);
         // Mark as failed but don't stop processing other items
-        entry.status = 'failed';
-        entry.error = error.message;
-        await this.db.updateScheduleEntry(entry);
+        if (error.code !== 'UPLOAD_OUTCOME_UNKNOWN') {
+          entry.status = 'failed';
+          entry.error = error.message;
+          await this.db.updateScheduleEntry(entry);
+        }
       }
     }
     

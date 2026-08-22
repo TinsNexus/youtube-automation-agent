@@ -1,4 +1,4 @@
-# YouTube Automation Agent
+# AgentTube - ECGHuNZSECqTXabaLjkVrTEnguiNZLkKF1qi8oBGpump
 
 **The open-source AI agent that runs a YouTube channel end to end.**
 
@@ -8,9 +8,22 @@ Research topics → write scripts → generate narration and visuals → assembl
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 18+](https://img.shields.io/badge/node-18%2B-43853d.svg)](package.json)
 
+## What's new in version 2.8.0
+
+Version 2.8 adds an evidence-first Research & Provenance Desk to every production:
+
+- **Source-aware research:** YouTube trend and competitor signals retain their exact video URLs, titles, publishers, and publication dates through autonomous planning.
+- **Claim ledger:** AI scripts declare externally verifiable claims and connect them only to sources supplied by the research stage.
+- **Evidence review:** Review Studio lets an operator add and verify sources, mark claims supported, unsupported, or explicitly waived, and record reviewer notes.
+- **Fail-closed approval:** unresolved claims block approval; a supported claim must link to at least one reviewer-verified source, and a waiver requires a note.
+- **Disclosure handoff:** realistic altered or synthetic media can be declared in Review Studio and is passed to YouTube's upload metadata.
+
+See the complete release history in [CHANGELOG.md](CHANGELOG.md).
+
 - **Self-hosted:** your credentials, media, and channel data stay under your control.
 - **Approval-first:** nothing is scheduled until quality, rights, and human-review gates pass by default.
-- **Provider-flexible:** use Gemini, OpenAI, OpenRouter, Kimi, MiMo, GLM, or another OpenAI-compatible endpoint.
+- **Strategy-driven:** give the Autonomous Channel Operator an objective, audience, pillars, cadence, and guardrails; it turns them into researched content plans and production runs.
+- **Provider-flexible:** use Gemini, OpenAI, OpenRouter, Kimi, MiMo, GLM, or another OpenAI-compatible text endpoint, plus Seedance, MiniMax H3, Gemini Omni Flash, Kling, Wan, or local FFmpeg for video.
 - **Observable:** follow persistent generation jobs, failures, review state, publishing, and local activation milestones from the dashboard.
 
 <!-- Launch gate: add only a real 30–45 second dashboard demo captured from a verified end-to-end run. -->
@@ -29,6 +42,30 @@ Open `http://localhost:3456`. The walkthrough explains each provider choice, tes
 
 Already know what you are doing? `npm run setup` offers a shorter classic flow, and `.env.example` documents every setting.
 
+### Verify production readiness
+
+Before activating autonomous production, open **Production readiness** in the dashboard and choose **Run verified check**. The gate makes small live text and narration requests, verifies access to the connected YouTube channel, creates and decodes a temporary MP4 containing audio and video, and validates every queued upload's metadata. It never creates or uploads a YouTube video, and temporary probe assets are deleted after the run.
+
+AI image generation can incur a larger provider charge, so its live probe is a separate opt-in checkbox. Without that checkbox, image configuration is reported as verified, skipped, or using the built-in gradient fallback without making a paid image request.
+
+AI video verification has its own **Include paid video probe** checkbox. When enabled, Lumen creates the provider's shortest supported test clip, records the external task and model, downloads and decodes the MP4, then removes the temporary asset. It never silently tries a second paid provider.
+
+Results persist locally in SQLite with exact remediation steps. A recorded blocking failure stops autonomous generation and publishing until a later run passes; manual work remains available when readiness has never been checked or the last result is older than 24 hours.
+
+### Resume an interrupted production
+
+Every generation stage writes a local SQLite checkpoint. If a provider times out or the application restarts, the dashboard shows the saved-stage count and the first incomplete stage. Choose **Resume** to continue from there, or select an earlier stage when you intentionally want to regenerate that stage and everything after it. Saved files are validated before reuse; missing artifacts are regenerated automatically.
+
+Autonomous Operator runs preserve their research and editorial plan, so **Resume run** continues unfinished plan items instead of researching and generating completed videos again. Publishing remains fail-closed: if an upload may have reached YouTube but no video ID was returned, Lumen requires channel reconciliation before another upload attempt.
+
+### Review research and provenance
+
+Every production has an **Evidence desk** inside Review Studio. Autonomous research carries exact YouTube source metadata into the production, while AI-generated scripts list the factual claims that need review. Add any official articles, datasets, asset licenses, or other evidence that the script needs, verify each source, and connect it to the claims it supports.
+
+A claim can be approved only when it links to a verified source. Unsupported claims remain blocking, and an intentional waiver requires a reviewer note. Productions with no externally verifiable factual claims are marked as not requiring provenance review. The separate factual-review and media-rights attestations remain required before scheduling.
+
+Use the altered or synthetic media control only when the video contains realistic content that requires YouTube disclosure. The selected value is preserved in the publishing queue and included in the YouTube upload request.
+
 ### What you need
 
 - Node.js 18+
@@ -37,6 +74,22 @@ Already know what you are doing? `npm run setup` offers a shorter classic flow, 
 - FFmpeg, installed automatically through `ffmpeg-static`
 
 Gemini offers free access for supported text and TTS usage. Gemini AI image generation currently requires paid-tier access; without an image provider, the agent can assemble gradient-based visuals instead.
+
+### Run the Autonomous Channel Operator
+
+Open **Autonomous operator** in the dashboard and describe the channel outcome—not a task list. Set the objective, audience, content pillars, publishing cadence, success metric, and boundaries, then choose **Activate & run now**.
+
+Lumen refreshes YouTube trend and configured-competitor signals, checks recent channel topics, creates an evidence-labeled editorial plan, and sends each planned video through strategy, script, thumbnail, SEO, production, and workflow management. Active strategies also guide scheduled generation at the requested weekly cadence. Operator runs, decisions, progress, and failures persist in SQLite and remain visible in the dashboard.
+
+By default, finished videos wait for factual review, media-rights confirmation, and approval. Once approved, the existing publishing agent schedules and uploads them. Turning on autonomy does not bypass those gates, and simulated videos still cannot publish.
+
+### Close the performance loop
+
+After publication, Lumen captures comparable 24-hour and 7-day performance snapshots. It evaluates CTR, retention, engagement, watch time, format, length, hook style, and title style against the channel's own history—not a universal view-count target.
+
+Open **Analytics → What the agent learned** to review the evidence and confidence behind each recommendation. Pending or rejected recommendations never influence generation. Once you approve one, the next Autonomous Channel Operator run includes it as an explicit planning constraint. Simulated analytics fallbacks are stored as unverified and are never eligible for baselines or recommendations.
+
+When an approved learning calls for better packaging, Lumen prepares a control plus title and thumbnail variants for new videos. Review Studio shows those options before approval; the selected combination is the only one handed to the publishing queue. Lumen does not silently swap live YouTube metadata.
 
 ## From idea to published video
 
@@ -47,7 +100,7 @@ Gemini offers free access for supported text and TTS usage. Gemini AI image gene
 | Production | Generates narration and visuals, then assembles a real MP4 | Provider choice and media fallbacks |
 | Review | Runs quality checks and opens the video in Review Studio | Facts, media rights, edits, approval |
 | Publish | Schedules and uploads approved content | Privacy, timing, final decision |
-| Learn | Pulls performance signals into the next strategy cycle | Automation and optimization settings |
+| Learn | Captures 24-hour and 7-day evidence, then proposes the next move | Approve or reject each learning before it guides planning |
 
 The agent distinguishes real MP4 output from simulated placeholders. Simulated output cannot enter the approval or publishing path.
 
@@ -57,14 +110,17 @@ For release history, see [CHANGELOG.md](CHANGELOG.md).
 
 ```mermaid
 graph TD
-    A[Content Strategy Agent] --> B[Script Writer Agent]
-    B --> C[Thumbnail Designer Agent]
-    B --> D[SEO Optimizer Agent]
-    C --> E[Production Management Agent]
-    D --> E
-    E --> F[Publishing & Scheduling Agent]
-    F --> G[Analytics & Optimization Agent]
-    G -->|feedback loop| A
+    O[Autonomous Channel Operator] --> A[Research and Editorial Plan]
+    A --> B[Content Strategy Agent]
+    B --> C[Script Writer Agent]
+    C --> D[Thumbnail Designer Agent]
+    C --> E[SEO Optimizer Agent]
+    D --> F[Production Management Agent]
+    E --> F
+    F --> G[Review and Approval Gates]
+    G --> H[Publishing & Scheduling Agent]
+    H --> I[Analytics & Optimization Agent]
+    I -->|feedback loop| A
 ```
 
 ## How It Works
@@ -89,13 +145,13 @@ All OpenAI-compatible providers work out of the box — the system auto-configur
 graph LR
     subgraph Direct
         OA[OpenAI<br/>GPT-5.6 family]
-        GM[Gemini<br/>3.5 Flash / 3.1 Pro]
+        GM[Gemini<br/>3.7 Flash / 3.1 Pro]
         KM[Kimi<br/>K3]
         MM[MiMo<br/>V2.5 Pro]
         GL[GLM<br/>GLM-5.3]
     end
     subgraph Router
-        OR[OpenRouter<br/>300+ models]
+        OR[OpenRouter<br/>400+ models]
     end
     Direct --> YAA[YouTube Automation Agent]
     Router --> YAA
@@ -104,13 +160,27 @@ graph LR
 | Provider | Models | Base URL | Cost |
 |----------|--------|----------|------|
 | **OpenAI** | GPT-5.6 Sol, Terra, Luna | `api.openai.com/v1` | provider pricing |
-| **OpenRouter** | 300+ models; curated defaults are validated against its live catalog | `openrouter.ai/api/v1` | varies by model |
-| **Google Gemini** | Gemini 3.5 Flash, 3.1 Pro Preview, 2.5 Pro | via `@google/genai` SDK | free tiers vary by model and modality |
+| **OpenRouter** | 400+ models; curated defaults are validated against its live catalog | `openrouter.ai/api/v1` | varies by model |
+| **Google Gemini** | Gemini 3.7 Flash, 3.1 Pro Preview, 3.5 Flash-Lite | via `@google/genai` SDK | free tiers vary by model and modality |
 | **Kimi (Moonshot AI)** | Kimi K3, K2.7 Code, K2.6 | `api.moonshot.ai/v1` | provider pricing |
 | **MiMo (Xiaomi)** | MiMo V2.5 Pro, V2.5 | `api.xiaomimimo.com/v1` | provider pricing |
 | **GLM (Zhipu AI)** | GLM-5.3, 5.2, 5.1 | `api.z.ai/api/paas/v4/` | provider pricing |
 
-Additional integrations: Anthropic Claude (`claude-opus-4-8`), ElevenLabs (Eleven v3 TTS), Replicate (Wan 2.7 video), local models via Ollama, any OpenAI-compatible endpoint.
+Additional integrations: Anthropic Claude (`claude-fable-5`), ElevenLabs (Eleven v3 TTS), Replicate (Wan 2.7 video), local models via Ollama, any OpenAI-compatible endpoint.
+
+### AI video providers
+
+Local slideshow rendering remains the default, so upgrading does not start paid video requests. Choose a provider in **Channel setup**, set a paid-seconds cap, then run the separately opted-in paid video readiness probe.
+
+| Provider | Default model | Best fit | Clip limits |
+| --- | --- | --- | --- |
+| ByteDance | `bytedance/seedance-2.5` through Replicate | Cinematic long scenes and large reference sets | 4–30 seconds |
+| MiniMax | `MiniMax-H3` | Multimodal references, native stereo audio, optional 2K | 4–15 seconds |
+| Google | `gemini-omni-flash-preview` | Fast generation and conversational editing | 3–10 seconds |
+| Kuaishou | `kling-v3-omni` | Storyboards and character/voice consistency | 3–15 seconds |
+| Alibaba | Wan 2.7 task-specific models | Efficient generation, reference video, and continuation | 2–15 seconds |
+
+Long-form productions use hybrid assembly: Lumen generates bounded provider clips for the hook and important sections, fills the remaining timeline locally, mixes the existing narration, and keeps the generated caption file alongside the production. As soon as a provider returns its task ID, Lumen persists it before polling so interrupted jobs can resume that known task instead of submitting it again.
 
 ## Configuration
 
@@ -162,7 +232,14 @@ OPENAI_API_KEY=sk-...
 # ELEVENLABS_VOICE_ID=...
 
 # Optional: AI video generation
-# REPLICATE_API_KEY=...
+# VIDEO_PROVIDER=slideshow # auto, seedance, minimax_h3, google_omni, kling, wan
+# VIDEO_GENERATION_MODE=hybrid
+# VIDEO_MAX_GENERATED_SECONDS=60
+# REPLICATE_API_TOKEN=...  # Seedance 2.5
+# MINIMAX_API_KEY=...      # MiniMax H3
+# KLING_ACCESS_KEY=...
+# KLING_SECRET_KEY=...
+# DASHSCOPE_API_KEY=...    # Wan 2.7
 
 # App config
 NODE_ENV=production
@@ -171,6 +248,11 @@ CHANNEL_NAME=Your Channel Name
 TARGET_AUDIENCE=Your target audience
 YOUTUBE_REGION=US
 DEFAULT_PRIVACY_STATUS=private
+
+# Optional recovery tuning (defaults shown)
+MAX_CONCURRENT_JOBS=1
+GENERATION_STAGE_MAX_ATTEMPTS=2
+GENERATION_RETRY_BASE_MS=1000
 
 # Optional: protect mutating API routes (POST /generate, /publish)
 # API_KEY=some-long-random-string
@@ -207,6 +289,10 @@ gantt
 
 The scheduler runs automatically after `npm start`. Content generation at 06:00, publishing queue processed every 15 minutes, analytics at 09:00, optimization at 22:00. Weekly strategy reviews run on Sundays.
 
+When an active channel strategy exists, the 06:00 generation check uses its cadence and launches an autonomous research-and-production run when the content buffer needs work. Without an active strategy, the original topic-selection flow remains in place.
+
+Daily analytics collection backfills each real publication's 24-hour and 7-day evidence windows. Recommendations require at least two real measurements, and format or style comparisons require at least two videos in each compared group.
+
 ## API
 
 ```bash
@@ -222,11 +308,52 @@ curl -X POST http://localhost:3456/generate \
 # inspect the returned background job
 curl http://localhost:3456/api/jobs/:jobId
 
+# resume a failed/interrupted job from its first incomplete checkpoint
+curl -X POST http://localhost:3456/api/jobs/:jobId/resume \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $API_KEY" \
+  -d '{}'
+
+# intentionally regenerate a selected stage and everything after it
+curl -X POST http://localhost:3456/api/jobs/:jobId/resume \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $API_KEY" \
+  -d '{"stage":"thumbnail"}'
+
+# inspect the latest production-readiness evidence
+curl http://localhost:3456/api/readiness
+
+# run harmless live probes; add {"includePaidMedia":true} only to test paid image generation
+curl -X POST http://localhost:3456/api/readiness/run \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $API_KEY" \
+  -d '{"includePaidMedia":false}'
+
+# save a channel strategy
+curl -X PUT http://localhost:3456/api/operator/strategy \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $API_KEY" \
+  -d '{"objective":"Own practical AI automation for small teams","audience":"Small business operators","contentPillars":["AI workflows","Automation playbooks"],"cadencePerWeek":2,"videosPerRun":2,"defaultFormat":"tutorial","defaultLength":"medium","status":"draft"}'
+
+# activate the saved strategy and start a background operator run
+curl -X POST http://localhost:3456/api/operator/start \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $API_KEY" \
+  -d '{}'
+
+# resume an interrupted operator run from its saved plan
+curl -X POST http://localhost:3456/api/operator/runs/:runId/resume \
+  -H "x-api-key: $API_KEY"
+
 # view schedule
 curl http://localhost:3456/schedule
 
 # get analytics
 curl http://localhost:3456/analytics
+
+# approve an evidence-backed learning for future autonomous plans
+curl -X POST http://localhost:3456/api/learning/recommendations/:recommendationId/approve \
+  -H "x-api-key: $API_KEY"
 
 # inspect, edit, and approve content before scheduling
 curl http://localhost:3456/api/content/:contentId
@@ -279,7 +406,7 @@ class ClaudeAIService {
   }
   async generateContent(prompt) {
     const message = await this.client.messages.create({
-      model: 'claude-opus-4-8',
+      model: 'claude-fable-5',
       max_tokens: 1024,
       messages: [{ role: 'user', content: prompt }]
     });
@@ -310,7 +437,7 @@ youtube-automation-agent/
 ├── database/        # SQLite schema and access layer
 ├── data/            # generated content and assets
 ├── schedules/       # cron-based automation
-├── utils/           # AI service wrappers, logging, credential management
+├── utils/           # AI services, autonomous operator, logging, credential management
 ├── .github/         # CI workflow (lint + tests on every push/PR)
 └── index.js         # Express server + agent initialization
 ```
@@ -373,7 +500,7 @@ MIT — see [LICENSE](LICENSE).
 
 - [OpenAI](https://openai.com/) — GPT-5.6 Sol, GPT Image 2, GPT-4o-mini-tts
 - [OpenRouter](https://openrouter.ai/) — unified multi-model API
-- [Google](https://ai.google.dev/) — Gemini 3.5 Flash, Gemini 3.1 Flash Image, Gemini 3.1 Flash TTS
+- [Google](https://ai.google.dev/) — Gemini 3.7 Flash, Gemini 3.1 Flash Image, Gemini 3.1 Flash TTS
 - [Google Cloud](https://console.cloud.google.com/) — YouTube Data API
 - [Moonshot AI](https://www.moonshot.ai/) — Kimi K3
 - [Xiaomi](https://mimo.mi.com/) — MiMo V2.5 Pro

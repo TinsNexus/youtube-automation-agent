@@ -1,7 +1,7 @@
 {
   "name": "youtube-automation-agent",
-  "version": "2.5.0",
-  "description": "YouTube Automation Agent is an open-source AI agent that runs a YouTube channel end to end",
+  "version": "2.8.0",
+  "description": "AgentTube is an open-source AI agent that runs a YouTube channel end to end",
   "main": "electron/main.js",
   "scripts": {
     "start": "node index.js",

@@ -161,6 +161,37 @@ class Database {
         performance_grade TEXT,
         analyzed_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`,
+
+      // Evidence-backed channel learning
+      `CREATE TABLE IF NOT EXISTS performance_snapshots (
+        id TEXT PRIMARY KEY,
+        video_id TEXT NOT NULL,
+        production_id TEXT,
+        measurement_window TEXT NOT NULL,
+        published_at TEXT,
+        metrics TEXT NOT NULL,
+        content_attributes TEXT NOT NULL,
+        baseline TEXT,
+        deltas TEXT,
+        confidence TEXT DEFAULT 'low',
+        simulated INTEGER DEFAULT 0,
+        measured_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(video_id, measurement_window)
+      )`,
+      `CREATE TABLE IF NOT EXISTS learning_recommendations (
+        id TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL UNIQUE,
+        category TEXT NOT NULL,
+        title TEXT NOT NULL,
+        rationale TEXT NOT NULL,
+        evidence TEXT NOT NULL,
+        proposed_change TEXT NOT NULL,
+        confidence TEXT DEFAULT 'low',
+        status TEXT DEFAULT 'pending',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        reviewed_at TEXT
+      )`,
       
       // Keywords Performance
       `CREATE TABLE IF NOT EXISTS keyword_performance (
@@ -218,6 +249,38 @@ class Database {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         completed_at TEXT
       )`,
+      `CREATE TABLE IF NOT EXISTS generation_checkpoints (
+        job_id TEXT NOT NULL,
+        stage TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        artifact TEXT,
+        attempt_count INTEGER DEFAULT 0,
+        error TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (job_id, stage),
+        FOREIGN KEY (job_id) REFERENCES generation_jobs(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS media_generation_tasks (
+        id TEXT PRIMARY KEY,
+        job_id TEXT,
+        production_id TEXT,
+        scene_index INTEGER NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        external_task_id TEXT,
+        status TEXT DEFAULT 'submitting',
+        request TEXT NOT NULL DEFAULT '{}',
+        provider_data TEXT NOT NULL DEFAULT '{}',
+        output_path TEXT,
+        error TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        completed_at TEXT,
+        UNIQUE(job_id, scene_index, provider),
+        FOREIGN KEY (job_id) REFERENCES generation_jobs(id)
+      )`,
       `CREATE TABLE IF NOT EXISTS production_snapshots (
         production_id TEXT PRIMARY KEY,
         strategy TEXT,
@@ -233,6 +296,18 @@ class Database {
         editor_data TEXT,
         quality_checks TEXT,
         review_notes TEXT,
+        reviewed_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (production_id) REFERENCES productions(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS content_provenance (
+        production_id TEXT PRIMARY KEY,
+        sources TEXT NOT NULL DEFAULT '[]',
+        claims TEXT NOT NULL DEFAULT '[]',
+        contains_synthetic_media INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'not_required',
+        summary TEXT NOT NULL DEFAULT '{}',
         reviewed_at TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -263,6 +338,39 @@ class Database {
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`,
+      `CREATE TABLE IF NOT EXISTS channel_strategies (
+        id TEXT PRIMARY KEY,
+        objective TEXT NOT NULL,
+        audience TEXT NOT NULL,
+        value_proposition TEXT,
+        content_pillars TEXT NOT NULL,
+        cadence_per_week INTEGER DEFAULT 1,
+        videos_per_run INTEGER DEFAULT 1,
+        default_format TEXT DEFAULT 'explainer',
+        default_length TEXT DEFAULT 'medium',
+        success_metric TEXT,
+        constraints TEXT,
+        status TEXT DEFAULT 'draft',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS operator_runs (
+        id TEXT PRIMARY KEY,
+        strategy_id TEXT NOT NULL,
+        status TEXT DEFAULT 'queued',
+        stage TEXT DEFAULT 'queued',
+        progress INTEGER DEFAULT 0,
+        research TEXT,
+        plan TEXT,
+        generated_jobs TEXT,
+        summary TEXT,
+        error TEXT,
+        cancel_requested INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        completed_at TEXT,
+        FOREIGN KEY (strategy_id) REFERENCES channel_strategies(id)
+      )`,
       `CREATE TABLE IF NOT EXISTS notifications (
         id TEXT PRIMARY KEY,
         type TEXT NOT NULL,
@@ -271,6 +379,15 @@ class Database {
         message TEXT NOT NULL,
         data TEXT,
         status TEXT DEFAULT 'unread',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS readiness_runs (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        checks TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`,
             // System Settings
@@ -304,7 +421,14 @@ class Database {
       ['automation_paused', 'false', 'Pause generation and publishing automation'],
       ['channel_timezone', 'America/Chicago', 'Timezone used to present channel schedules'],
       ['max_daily_posts', '1', 'Maximum posts per day'],
-      ['content_buffer_days', '3', 'Days of content to keep in buffer']
+      ['content_buffer_days', '3', 'Days of content to keep in buffer'],
+      ['video_provider', 'slideshow', 'Video provider: slideshow, auto, seedance, minimax_h3, google_omni, kling, or wan'],
+      ['video_provider_order', 'seedance,minimax_h3,google_omni,kling,wan,slideshow', 'Provider priority used by automatic routing'],
+      ['video_generation_mode', 'hybrid', 'Use provider clips within a locally assembled long-form video'],
+      ['video_clip_duration', '8', 'Requested duration for each generated provider clip'],
+      ['video_max_generated_seconds', '60', 'Maximum paid provider seconds per production'],
+      ['video_resolution', '720p', 'Requested generated clip resolution'],
+      ['video_aspect_ratio', '16:9', 'Requested generated clip aspect ratio']
     ];
 
     for (const [key, value, description] of defaultSettings) {
@@ -514,6 +638,7 @@ class Database {
       'SELECT * FROM publish_schedule WHERE production_id = ? ORDER BY created_at DESC LIMIT 1',
       [productionId]
     );
+    const provenance = await this.getContentProvenance(productionId);
     return {
       ...row,
       assets: JSON.parse(row.assets || '{}'),
@@ -524,7 +649,11 @@ class Database {
       seo: JSON.parse(row.seo || '{}'),
       editorData: JSON.parse(row.editor_data || '{}'),
       qualityChecks: JSON.parse(row.quality_checks || '[]'),
-      schedule: schedule ? { ...schedule, metadata: JSON.parse(schedule.metadata || '{}') } : null
+      schedule: schedule ? { ...schedule, metadata: JSON.parse(schedule.metadata || '{}') } : null,
+      provenance: provenance || {
+        sources: [], claims: [], containsSyntheticMedia: false, status: 'not_required',
+        summary: { sourceCount: 0, verifiedSources: 0, claimCount: 0, resolvedClaims: 0, highRiskClaims: 0, unresolvedClaims: 0 }
+      }
     };
   }
 
@@ -568,11 +697,16 @@ class Database {
 
   async createGenerationJob(input = {}) {
     const id = this.generateId('job');
+    const details = {
+      strategyContext: input.strategyContext || {},
+      resumeCount: 0,
+      reusedStages: []
+    };
     await this.executeQuery(
       `INSERT INTO generation_jobs (
         id, topic, style, length, source, status, stage, progress, details
       ) VALUES (?, ?, ?, ?, ?, 'queued', 'queued', 0, ?)`,
-      [id, input.topic || null, input.style || null, input.length || 'medium', input.source || 'manual', '{}']
+      [id, input.topic || null, input.style || null, input.length || 'medium', input.source || 'manual', JSON.stringify(details)]
     );
     return this.getGenerationJob(id);
   }
@@ -608,14 +742,132 @@ class Database {
 
   async listGenerationJobs(limit = 30) {
     const rows = await this.getAllRows('SELECT * FROM generation_jobs ORDER BY created_at DESC LIMIT ?', [limit]);
-    return rows.map(row => ({ ...row, details: JSON.parse(row.details || '{}'), cancelRequested: Boolean(row.cancel_requested) }));
+    return Promise.all(rows.map(async row => {
+      const job = { ...row, details: JSON.parse(row.details || '{}'), cancelRequested: Boolean(row.cancel_requested) };
+      job.checkpoints = await this.listGenerationCheckpoints(job.id);
+      job.mediaTasks = await this.listMediaGenerationTasks(job.id);
+      return job;
+    }));
+  }
+
+  async saveGenerationCheckpoint(jobId, stage, changes = {}) {
+    const current = await this.getGenerationCheckpoint(jobId, stage);
+    const artifact = changes.artifact === undefined ? current?.artifact : changes.artifact;
+    const attemptCount = changes.incrementAttempt
+      ? Number(current?.attempt_count || 0) + 1
+      : changes.attemptCount ?? current?.attempt_count ?? 0;
+    await this.executeQuery(
+      `INSERT INTO generation_checkpoints (
+        job_id, stage, status, artifact, attempt_count, error, started_at, completed_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(job_id, stage) DO UPDATE SET
+        status = excluded.status, artifact = excluded.artifact,
+        attempt_count = excluded.attempt_count, error = excluded.error,
+        started_at = excluded.started_at, completed_at = excluded.completed_at,
+        updated_at = datetime('now')`,
+      [
+        jobId,
+        stage,
+        changes.status ?? current?.status ?? 'pending',
+        artifact === undefined ? null : JSON.stringify(artifact),
+        attemptCount,
+        changes.error === undefined ? current?.error ?? null : changes.error,
+        changes.startedAt === undefined ? current?.started_at ?? null : changes.startedAt,
+        changes.completedAt === undefined ? current?.completed_at ?? null : changes.completedAt
+      ]
+    );
+    return this.getGenerationCheckpoint(jobId, stage);
+  }
+
+  async getGenerationCheckpoint(jobId, stage) {
+    const row = await this.getRow(
+      'SELECT * FROM generation_checkpoints WHERE job_id = ? AND stage = ?',
+      [jobId, stage]
+    );
+    return row ? { ...row, artifact: JSON.parse(row.artifact || 'null') } : null;
+  }
+
+  async listGenerationCheckpoints(jobId) {
+    const rows = await this.getAllRows(
+      'SELECT * FROM generation_checkpoints WHERE job_id = ? ORDER BY updated_at, stage',
+      [jobId]
+    );
+    return rows.map(row => ({ ...row, artifact: JSON.parse(row.artifact || 'null') }));
+  }
+
+  async deleteGenerationCheckpoints(jobId, stages = []) {
+    if (!stages.length) return;
+    const placeholders = stages.map(() => '?').join(', ');
+    await this.executeQuery(
+      `DELETE FROM generation_checkpoints WHERE job_id = ? AND stage IN (${placeholders})`,
+      [jobId, ...stages]
+    );
+  }
+
+  async createMediaGenerationTask(input = {}) {
+    const id = this.generateId('media');
+    await this.executeQuery(
+      `INSERT INTO media_generation_tasks (
+        id, job_id, production_id, scene_index, provider, model, status, request, provider_data
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}')
+      ON CONFLICT(job_id, scene_index, provider) DO UPDATE SET
+        production_id = excluded.production_id, request = excluded.request, updated_at = datetime('now')`,
+      [id, input.jobId || null, input.productionId || null, input.sceneIndex, input.provider, input.model, input.status || 'submitting', JSON.stringify(input.request || {})]
+    );
+    return this.findMediaGenerationTask(input.jobId, input.sceneIndex, input.provider);
+  }
+
+  async findMediaGenerationTask(jobId, sceneIndex, provider) {
+    const row = await this.getRow(
+      'SELECT * FROM media_generation_tasks WHERE job_id IS ? AND scene_index = ? AND provider = ?',
+      [jobId || null, sceneIndex, provider]
+    );
+    return this.parseMediaGenerationTask(row);
+  }
+
+  async updateMediaGenerationTask(id, changes = {}) {
+    const current = this.parseMediaGenerationTask(await this.getRow('SELECT * FROM media_generation_tasks WHERE id = ?', [id]));
+    if (!current) return null;
+    await this.executeQuery(
+      `UPDATE media_generation_tasks SET model = ?, external_task_id = ?, status = ?, provider_data = ?,
+       output_path = ?, error = ?, completed_at = ?, updated_at = datetime('now') WHERE id = ?`,
+      [
+        changes.model ?? current.model,
+        changes.externalTaskId ?? current.external_task_id,
+        changes.status ?? current.status,
+        JSON.stringify(changes.providerData ?? current.providerData ?? {}),
+        changes.outputPath ?? current.output_path,
+        changes.error === undefined ? current.error : changes.error,
+        changes.completedAt === undefined ? current.completed_at : changes.completedAt,
+        id
+      ]
+    );
+    return this.parseMediaGenerationTask(await this.getRow('SELECT * FROM media_generation_tasks WHERE id = ?', [id]));
+  }
+
+  async listMediaGenerationTasks(jobId) {
+    const rows = await this.getAllRows('SELECT * FROM media_generation_tasks WHERE job_id = ? ORDER BY scene_index, created_at', [jobId]);
+    return rows.map(row => this.parseMediaGenerationTask(row));
+  }
+
+  parseMediaGenerationTask(row) {
+    return row ? {
+      ...row,
+      request: JSON.parse(row.request || '{}'),
+      providerData: JSON.parse(row.provider_data || '{}')
+    } : null;
   }
 
   async markInterruptedJobs() {
     await this.executeQuery(
-      `UPDATE generation_jobs SET status = 'interrupted', stage = 'interrupted',
+      `UPDATE generation_jobs SET status = 'interrupted',
        error = 'The application restarted before this job finished', updated_at = datetime('now'),
        completed_at = datetime('now') WHERE status IN ('queued', 'running')`
+    );
+    await this.executeQuery(
+      `UPDATE operator_runs SET status = 'interrupted', stage = 'interrupted',
+       error = 'The application restarted before this operator run finished', updated_at = datetime('now'),
+       completed_at = datetime('now') WHERE status IN ('queued', 'running', 'cancelling')`
     );
   }
 
@@ -638,6 +890,41 @@ class Database {
       ]
     );
     return this.getProductionBundle(productionId);
+  }
+
+  async saveContentProvenance(productionId, provenance = {}) {
+    await this.executeQuery(
+      `INSERT INTO content_provenance (
+        production_id, sources, claims, contains_synthetic_media, status, summary, reviewed_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(production_id) DO UPDATE SET
+        sources = excluded.sources, claims = excluded.claims,
+        contains_synthetic_media = excluded.contains_synthetic_media,
+        status = excluded.status, summary = excluded.summary,
+        reviewed_at = excluded.reviewed_at, updated_at = datetime('now')`,
+      [
+        productionId,
+        JSON.stringify(provenance.sources || []),
+        JSON.stringify(provenance.claims || []),
+        Number(provenance.containsSyntheticMedia === true),
+        provenance.status || 'not_required',
+        JSON.stringify(provenance.summary || {}),
+        provenance.reviewedAt || null
+      ]
+    );
+    return this.getContentProvenance(productionId);
+  }
+
+  async getContentProvenance(productionId) {
+    const row = await this.getRow('SELECT * FROM content_provenance WHERE production_id = ?', [productionId]);
+    return row ? {
+      ...row,
+      sources: JSON.parse(row.sources || '[]'),
+      claims: JSON.parse(row.claims || '[]'),
+      containsSyntheticMedia: Boolean(row.contains_synthetic_media),
+      summary: JSON.parse(row.summary || '{}'),
+      reviewedAt: row.reviewed_at
+    } : null;
   }
 
   async getChannelProfile() {
@@ -701,6 +988,113 @@ class Database {
     return this.getRow('SELECT * FROM content_ideas WHERE id = ?', [id]);
   }
 
+  async getChannelStrategy() {
+    const row = await this.getRow("SELECT * FROM channel_strategies WHERE id = 'default'");
+    return row ? this.deserializeChannelStrategy(row) : null;
+  }
+
+  async saveChannelStrategy(strategy) {
+    const current = await this.getChannelStrategy() || {};
+    await this.executeQuery(
+      `INSERT INTO channel_strategies (
+        id, objective, audience, value_proposition, content_pillars, cadence_per_week,
+        videos_per_run, default_format, default_length, success_metric, constraints,
+        status, created_at, updated_at
+      ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'))
+      ON CONFLICT(id) DO UPDATE SET
+        objective = excluded.objective, audience = excluded.audience,
+        value_proposition = excluded.value_proposition, content_pillars = excluded.content_pillars,
+        cadence_per_week = excluded.cadence_per_week, videos_per_run = excluded.videos_per_run,
+        default_format = excluded.default_format, default_length = excluded.default_length,
+        success_metric = excluded.success_metric, constraints = excluded.constraints,
+        status = excluded.status, updated_at = datetime('now')`,
+      [
+        strategy.objective ?? current.objective ?? '',
+        strategy.audience ?? current.audience ?? '',
+        strategy.valueProposition ?? current.value_proposition ?? '',
+        JSON.stringify(strategy.contentPillars ?? current.contentPillars ?? []),
+        strategy.cadencePerWeek ?? current.cadence_per_week ?? 1,
+        strategy.videosPerRun ?? current.videos_per_run ?? 1,
+        strategy.defaultFormat ?? current.default_format ?? 'explainer',
+        strategy.defaultLength ?? current.default_length ?? 'medium',
+        strategy.successMetric ?? current.success_metric ?? '',
+        strategy.constraints ?? current.constraints ?? '',
+        strategy.status ?? current.status ?? 'draft',
+        current.created_at || null
+      ]
+    );
+    return this.getChannelStrategy();
+  }
+
+  deserializeChannelStrategy(row) {
+    return {
+      ...row,
+      contentPillars: JSON.parse(row.content_pillars || '[]')
+    };
+  }
+
+  async createOperatorRun(strategyId = 'default') {
+    const id = this.generateId('operator');
+    await this.executeQuery(
+      `INSERT INTO operator_runs (id, strategy_id, research, plan, generated_jobs, summary)
+       VALUES (?, ?, '{}', '[]', '[]', '{}')`,
+      [id, strategyId]
+    );
+    return this.getOperatorRun(id);
+  }
+
+  async getOperatorRun(id) {
+    const row = await this.getRow('SELECT * FROM operator_runs WHERE id = ?', [id]);
+    return row ? this.deserializeOperatorRun(row) : null;
+  }
+
+  async getActiveOperatorRun() {
+    const row = await this.getRow(
+      "SELECT * FROM operator_runs WHERE status IN ('queued', 'running', 'cancelling') ORDER BY created_at DESC LIMIT 1"
+    );
+    return row ? this.deserializeOperatorRun(row) : null;
+  }
+
+  async listOperatorRuns(limit = 10) {
+    const rows = await this.getAllRows('SELECT * FROM operator_runs ORDER BY created_at DESC LIMIT ?', [limit]);
+    return rows.map(row => this.deserializeOperatorRun(row));
+  }
+
+  async updateOperatorRun(id, changes = {}) {
+    const current = await this.getOperatorRun(id);
+    if (!current) return null;
+    await this.executeQuery(
+      `UPDATE operator_runs SET status = ?, stage = ?, progress = ?, research = ?, plan = ?,
+       generated_jobs = ?, summary = ?, error = ?, cancel_requested = ?,
+       updated_at = datetime('now'), completed_at = ? WHERE id = ?`,
+      [
+        changes.status ?? current.status,
+        changes.stage ?? current.stage,
+        changes.progress ?? current.progress,
+        JSON.stringify(changes.research ?? current.research ?? {}),
+        JSON.stringify(changes.plan ?? current.plan ?? []),
+        JSON.stringify(changes.generatedJobs ?? current.generatedJobs ?? []),
+        JSON.stringify(changes.summary ?? current.summary ?? {}),
+        changes.error === undefined ? current.error : changes.error,
+        changes.cancelRequested === undefined ? current.cancel_requested : Number(changes.cancelRequested),
+        changes.completedAt === undefined ? current.completed_at : changes.completedAt,
+        id
+      ]
+    );
+    return this.getOperatorRun(id);
+  }
+
+  deserializeOperatorRun(row) {
+    return {
+      ...row,
+      research: JSON.parse(row.research || '{}'),
+      plan: JSON.parse(row.plan || '[]'),
+      generatedJobs: JSON.parse(row.generated_jobs || '[]'),
+      summary: JSON.parse(row.summary || '{}'),
+      cancelRequested: Boolean(row.cancel_requested)
+    };
+  }
+
   async createNotification(notification) {
     const id = this.generateId('notice');
     await this.executeQuery(
@@ -727,6 +1121,8 @@ class Database {
 
   // Publishing methods
   async saveScheduleEntry(entry) {
+    const existing = await this.getLatestScheduleEntry(entry.productionId);
+    if (existing) return existing;
     const id = this.generateId('schedule');
     entry.id = id;
     
@@ -771,14 +1167,16 @@ class Database {
     );
   }
 
-  async getPublishQueue() {
-    const rows = await this.getAllRows(
-      `SELECT * FROM publish_schedule 
-       WHERE status IN ('scheduled', 'paused') 
-       ORDER BY publish_time ASC`
+  async getLatestScheduleEntry(productionId) {
+    const row = await this.getRow(
+      'SELECT * FROM publish_schedule WHERE production_id = ? ORDER BY created_at DESC LIMIT 1',
+      [productionId]
     );
-    
-    return rows.map(row => ({
+    return row ? this.deserializeScheduleEntry(row) : null;
+  }
+
+  deserializeScheduleEntry(row) {
+    return {
       ...row,
       productionId: row.production_id,
       publishTime: row.publish_time,
@@ -787,7 +1185,17 @@ class Database {
       publishedAt: row.published_at,
       error: row.error_message,
       metadata: JSON.parse(row.metadata || '{}')
-    }));
+    };
+  }
+
+  async getPublishQueue() {
+    const rows = await this.getAllRows(
+      `SELECT * FROM publish_schedule
+       WHERE status IN ('scheduled', 'paused')
+       ORDER BY publish_time ASC`
+    );
+
+    return rows.map(row => this.deserializeScheduleEntry(row));
   }
 
   async getUpcomingSchedule(days = 7) {
@@ -801,16 +1209,7 @@ class Database {
       [endDate.toISOString()]
     );
     
-    return rows.map(row => ({
-      ...row,
-      productionId: row.production_id,
-      publishTime: row.publish_time,
-      youtubeId: row.youtube_id,
-      youtubeUrl: row.youtube_url,
-      publishedAt: row.published_at,
-      error: row.error_message,
-      metadata: JSON.parse(row.metadata || '{}')
-    }));
+    return rows.map(row => this.deserializeScheduleEntry(row));
   }
 
   // Analytics methods
@@ -853,6 +1252,194 @@ class Database {
       seoMetrics: JSON.parse(row.seo_metrics || '{}'),
       insights: JSON.parse(row.insights || '[]')
     }));
+  }
+
+  async savePerformanceSnapshot(snapshot) {
+    const existing = await this.getRow(
+      'SELECT id FROM performance_snapshots WHERE video_id = ? AND measurement_window = ?',
+      [snapshot.videoId, snapshot.measurementWindow]
+    );
+    const id = existing?.id || this.generateId('snapshot');
+    await this.executeQuery(
+      `INSERT INTO performance_snapshots (
+        id, video_id, production_id, measurement_window, published_at, metrics,
+        content_attributes, baseline, deltas, confidence, simulated, measured_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(video_id, measurement_window) DO UPDATE SET
+        production_id = excluded.production_id,
+        published_at = excluded.published_at,
+        metrics = excluded.metrics,
+        content_attributes = excluded.content_attributes,
+        baseline = excluded.baseline,
+        deltas = excluded.deltas,
+        confidence = excluded.confidence,
+        simulated = excluded.simulated,
+        measured_at = excluded.measured_at`,
+      [
+        id,
+        snapshot.videoId,
+        snapshot.productionId || null,
+        snapshot.measurementWindow,
+        snapshot.publishedAt || null,
+        JSON.stringify(snapshot.metrics || {}),
+        JSON.stringify(snapshot.contentAttributes || {}),
+        JSON.stringify(snapshot.baseline || {}),
+        JSON.stringify(snapshot.deltas || {}),
+        snapshot.confidence || 'low',
+        snapshot.simulated ? 1 : 0,
+        snapshot.measuredAt || new Date().toISOString()
+      ]
+    );
+    return this.getPerformanceSnapshot(id);
+  }
+
+  async getPerformanceSnapshot(id) {
+    const row = await this.getRow('SELECT * FROM performance_snapshots WHERE id = ?', [id]);
+    return this.parsePerformanceSnapshot(row);
+  }
+
+  async listPerformanceSnapshots(options = {}) {
+    const conditions = [];
+    const params = [];
+    if (options.videoId) {
+      conditions.push('video_id = ?');
+      params.push(options.videoId);
+    }
+    if (options.excludeVideoId) {
+      conditions.push('video_id != ?');
+      params.push(options.excludeVideoId);
+    }
+    if (options.measurementWindow) {
+      conditions.push('measurement_window = ?');
+      params.push(options.measurementWindow);
+    }
+    if (options.reliableOnly) conditions.push('simulated = 0');
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const rows = await this.getAllRows(
+      `SELECT * FROM performance_snapshots ${where} ORDER BY measured_at DESC`,
+      params
+    );
+    return rows.map(row => this.parsePerformanceSnapshot(row));
+  }
+
+  parsePerformanceSnapshot(row) {
+    if (!row) return null;
+    return {
+      ...row,
+      videoId: row.video_id,
+      productionId: row.production_id,
+      measurementWindow: row.measurement_window,
+      publishedAt: row.published_at,
+      measuredAt: row.measured_at,
+      simulated: Boolean(row.simulated),
+      metrics: JSON.parse(row.metrics || '{}'),
+      contentAttributes: JSON.parse(row.content_attributes || '{}'),
+      baseline: JSON.parse(row.baseline || '{}'),
+      deltas: JSON.parse(row.deltas || '{}')
+    };
+  }
+
+  async saveLearningRecommendation(recommendation) {
+    const existing = await this.getRow(
+      'SELECT id FROM learning_recommendations WHERE fingerprint = ?',
+      [recommendation.fingerprint]
+    );
+    const id = existing?.id || this.generateId('learning');
+    await this.executeQuery(
+      `INSERT INTO learning_recommendations (
+        id, fingerprint, category, title, rationale, evidence, proposed_change, confidence
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(fingerprint) DO UPDATE SET
+        category = excluded.category,
+        title = excluded.title,
+        rationale = excluded.rationale,
+        evidence = excluded.evidence,
+        proposed_change = excluded.proposed_change,
+        confidence = excluded.confidence,
+        updated_at = CURRENT_TIMESTAMP`,
+      [
+        id,
+        recommendation.fingerprint,
+        recommendation.category,
+        recommendation.title,
+        recommendation.rationale,
+        JSON.stringify(recommendation.evidence || {}),
+        JSON.stringify(recommendation.proposedChange || {}),
+        recommendation.confidence || 'low'
+      ]
+    );
+    return this.getLearningRecommendation(id);
+  }
+
+  async getLearningRecommendation(id) {
+    const row = await this.getRow('SELECT * FROM learning_recommendations WHERE id = ?', [id]);
+    return this.parseLearningRecommendation(row);
+  }
+
+  async listLearningRecommendations(options = {}) {
+    const conditions = [];
+    const params = [];
+    if (options.status) {
+      conditions.push('status = ?');
+      params.push(options.status);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const limit = Math.max(1, Math.min(100, Number(options.limit || 25)));
+    const rows = await this.getAllRows(
+      `SELECT * FROM learning_recommendations ${where}
+       ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
+                updated_at DESC LIMIT ?`,
+      [...params, limit]
+    );
+    return rows.map(row => this.parseLearningRecommendation(row));
+  }
+
+  async reviewLearningRecommendation(id, status) {
+    if (!['approved', 'rejected'].includes(status)) return null;
+    await this.executeQuery(
+      `UPDATE learning_recommendations
+       SET status = ?, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [status, id]
+    );
+    return this.getLearningRecommendation(id);
+  }
+
+  parseLearningRecommendation(row) {
+    if (!row) return null;
+    return {
+      ...row,
+      proposedChange: JSON.parse(row.proposed_change || '{}'),
+      evidence: JSON.parse(row.evidence || '{}'),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      reviewedAt: row.reviewed_at
+    };
+  }
+
+  async getPublishedContentContext(youtubeId) {
+    const row = await this.getRow(
+      `SELECT sch.production_id, sch.published_at, sch.title, ps.strategy, ps.script, ps.thumbnail, ps.seo,
+              cr.editor_data
+       FROM publish_schedule sch
+       LEFT JOIN production_snapshots ps ON ps.production_id = sch.production_id
+       LEFT JOIN content_reviews cr ON cr.production_id = sch.production_id
+       WHERE sch.youtube_id = ? ORDER BY sch.published_at DESC LIMIT 1`,
+      [youtubeId]
+    );
+    if (!row) return {};
+    const editorData = JSON.parse(row.editor_data || '{}');
+    const thumbnail = JSON.parse(row.thumbnail || '{}');
+    const selectedThumbnail = editorData.packagingExperiment?.thumbnailVariants?.[editorData.selectedThumbnailVariant];
+    return {
+      productionId: row.production_id,
+      publishedAt: row.published_at,
+      title: editorData.title || row.title,
+      strategy: JSON.parse(row.strategy || '{}'),
+      script: JSON.parse(row.script || '{}'),
+      thumbnail: selectedThumbnail?.concept ? { ...thumbnail, concept: selectedThumbnail.concept } : thumbnail,
+      seo: JSON.parse(row.seo || '{}')
+    };
   }
 
   // Keyword performance
@@ -943,6 +1530,43 @@ class Database {
       settings[row.key] = row.value;
       return settings;
     }, {});
+  }
+
+  // Production readiness
+  async saveReadinessRun(run) {
+    await this.executeQuery(
+      `INSERT OR REPLACE INTO readiness_runs (
+        id, status, checks, summary, started_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        run.id,
+        run.status,
+        JSON.stringify(run.checks || []),
+        JSON.stringify(run.summary || {}),
+        run.startedAt,
+        run.completedAt
+      ]
+    );
+    return this.getReadinessRun(run.id);
+  }
+
+  async getReadinessRun(id) {
+    const row = await this.getRow('SELECT * FROM readiness_runs WHERE id = ?', [id]);
+    return this.parseReadinessRun(row);
+  }
+
+  async getLatestReadinessRun() {
+    const row = await this.getRow('SELECT * FROM readiness_runs ORDER BY completed_at DESC LIMIT 1');
+    return this.parseReadinessRun(row);
+  }
+
+  parseReadinessRun(row) {
+    if (!row) return null;
+    return {
+      ...row,
+      checks: JSON.parse(row.checks || '[]'),
+      summary: JSON.parse(row.summary || '{}')
+    };
   }
 
   // Utility methods
