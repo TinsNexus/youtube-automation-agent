@@ -66,6 +66,14 @@ class AITextService {
       return this._initOpenAICompatible(PROVIDERS[provider], apiKey, model);
     }
 
+    // credential-manager.js's OpenAI-specific setup stores the key under
+    // `credentials.openai`, not `credentials.aiProvider` (that shape is only
+    // used by the other providers) — check it explicitly or OpenAI users who
+    // ran the wizard fall through to templates despite having a valid key.
+    if (credentials.openai?.apiKey) {
+      return this._initOpenAICompatible(PROVIDERS.openai, credentials.openai.apiKey, credentials.openai.model);
+    }
+
     for (const [, preset] of Object.entries(PROVIDERS)) {
       const key = process.env[preset.envKey];
       if (key) {
