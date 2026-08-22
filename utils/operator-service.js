@@ -30,7 +30,11 @@ class OperatorService {
       this.check('thumbnail', Boolean(thumbnail?.path),
         thumbnail?.path ? 'Thumbnail asset is present' : 'Thumbnail asset is missing', false),
       this.check('video', Boolean(finalVideo?.path && !finalVideo?.simulated),
-        finalVideo?.simulated ? 'Only a simulated video was produced' : 'Final MP4 is missing')
+        finalVideo?.path && !finalVideo?.simulated
+          ? 'Final MP4 is present'
+          : finalVideo?.simulated
+            ? 'Only a simulated video was produced'
+            : 'Final MP4 is missing')
     ];
 
     const topic = String(production.strategy?.topic || '').trim();

@@ -959,7 +959,11 @@ class YouTubeAutomationAgent {
 
   async generateContent(topic = null, style = null, length = 'medium', options = {}) {
     this.logger.info('Starting content generation pipeline...');
-    const { jobId = null, strategyContext = {} } = options;
+    const { jobId = null, strategyContext: rawStrategyContext } = options;
+    // A destructuring default only fires on `undefined` — manual generation
+    // requests explicitly carry `strategyContext: null`, which would otherwise
+    // reach the `.angle`/`.rationale` reads below and throw.
+    const strategyContext = rawStrategyContext || {};
     const profile = await this.db.getChannelProfile() || {};
     const lengthLabels = { short: '2-4 minutes', medium: '8-12 minutes', long: '15-20 minutes' };
 
