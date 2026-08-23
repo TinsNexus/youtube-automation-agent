@@ -512,6 +512,23 @@ class CredentialManager {
 
     process.env[key] = String(value);
   }
+
+  // Re-applies channel/content settings from the saved credentials file as env
+  // vars. The CLI wizard sets these directly in its own short-lived process,
+  // which is gone by the time `npm start`/the packaged app boots — this makes
+  // them survive a restart instead of silently reverting to hardcoded defaults.
+  syncEnvVars() {
+    const channel = this.credentials.channel || {};
+    const content = this.credentials.content || {};
+    this.setEnvIfPresent('CHANNEL_NAME', channel.channelName);
+    this.setEnvIfPresent('DEFAULT_AUTHOR', channel.channelName);
+    this.setEnvIfPresent('DEFAULT_PRIVACY_STATUS', channel.defaultPrivacy);
+    this.setEnvIfPresent('TARGET_AUDIENCE', content.targetAudience);
+    if (Array.isArray(content.competitorChannels) && content.competitorChannels.length) {
+      this.setEnvIfPresent('COMPETITOR_CHANNELS', content.competitorChannels.join(','));
+    }
+  }
+
   // Validation methods
   hasAITextProvider() {
     if (this.credentials.openai?.apiKey || this.credentials.gemini?.apiKey || this.credentials.aiProvider?.apiKey) {

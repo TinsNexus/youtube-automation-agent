@@ -45,7 +45,7 @@
       <div id="toast" class="toast hidden" role="status"></div>
 
       <section id="overview-view" class="view active">
-        <div id="setup-banner" class="setup-banner hidden"><div><strong>Finish setup to activate your agents</strong><p>The operator console is ready, but generation and publishing stay disabled until credentials are configured.</p></div><code>npm run walkthrough</code></div>
+        <div id="setup-banner" class="setup-banner hidden"><div><strong>Finish setup to activate your agents</strong><p>The operator console is ready, but generation and publishing stay disabled until credentials are configured.</p></div><button id="setup-wizard-button" type="button" class="button primary">Start setup wizard</button></div>
         <div class="stats-grid">
           <article class="stat"><span>Needs review</span><strong id="stat-review">—</strong><small>waiting for a decision</small></article>
           <article class="stat"><span>Scheduled</span><strong id="stat-scheduled">—</strong><small>next 30 days</small></article>
@@ -237,6 +237,67 @@
       <label><span>Format</span><select name="style"><option value="explainer">Explainer</option><option value="tutorial">Tutorial</option><option value="list">List</option><option value="review">Review</option><option value="story">Story</option></select></label>
       <div class="form-actions"><button type="submit" class="button primary">Add to backlog</button><button type="button" class="button ghost" data-close>Cancel</button></div>
     </form>
+  </dialog>
+
+  <dialog id="setup-wizard-dialog" class="dialog setup-wizard-dialog">
+    <div class="dialog-heading">
+      <div><p class="eyebrow" id="wizard-step-label">STEP 1 OF 3</p><h2 id="wizard-step-title">AI provider</h2></div>
+      <button type="button" class="close-button" data-close>×</button>
+    </div>
+
+    <div class="wizard-step active" id="wizard-step-ai">
+      <p>Pick one AI provider to write scripts, generate content ideas, and (for OpenAI/Gemini) images and narration.</p>
+      <div class="form-grid two">
+        <label><span>Provider</span><select id="wizard-ai-provider"></select></label>
+        <label><span>Model</span><select id="wizard-ai-model"></select></label>
+      </div>
+      <label><span>API key</span><input id="wizard-ai-key" type="password" autocomplete="off" placeholder="Paste your API key"></label>
+      <p class="callout" id="wizard-ai-instructions"></p>
+      <div class="form-actions">
+        <button type="button" class="button ghost" data-close>Do this later</button>
+        <button type="button" class="button primary" id="wizard-ai-test">Test &amp; save</button>
+      </div>
+    </div>
+
+    <div class="wizard-step" id="wizard-step-video">
+      <p>Choose how videos get assembled. Local slideshow costs nothing and is the default; the others generate AI video clips.</p>
+      <div class="form-grid two">
+        <label><span>Video provider</span><select id="wizard-video-provider"></select></label>
+      </div>
+      <div id="wizard-video-key-row" class="form-grid two hidden">
+        <label><span id="wizard-video-key-label">API key</span><input id="wizard-video-key" type="password" autocomplete="off"></label>
+        <label id="wizard-video-secret-row" class="hidden"><span id="wizard-video-secret-label">Secret</span><input id="wizard-video-secret" type="password" autocomplete="off"></label>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="button secondary" data-wizard-back="ai">Back</button>
+        <button type="button" class="button primary" id="wizard-video-next">Next: YouTube</button>
+      </div>
+    </div>
+
+    <div class="wizard-step" id="wizard-step-youtube">
+      <p>Connect the YouTube channel to publish to. Create a <strong>Desktop app</strong> OAuth client in Google Cloud Console, then paste its Client ID/Secret below.</p>
+      <div id="wizard-youtube-connected" class="callout hidden"></div>
+      <div class="form-grid two">
+        <label><span>Client ID</span><input id="wizard-yt-client-id" placeholder="xxxx.apps.googleusercontent.com"></label>
+        <label><span>Client secret</span><input id="wizard-yt-client-secret" type="password" autocomplete="off"></label>
+      </div>
+      <p class="callout" id="wizard-youtube-status">Videos still generate locally without this — you can connect it later from here.</p>
+      <div class="form-actions">
+        <button type="button" class="button secondary" data-wizard-back="video">Back</button>
+        <button type="button" class="button ghost" data-wizard-goto="summary">Skip for now</button>
+        <button type="button" class="button primary" id="wizard-youtube-connect">Connect YouTube</button>
+      </div>
+    </div>
+
+    <div class="wizard-step" id="wizard-step-summary">
+      <p>Here's what your pipeline can do:</p>
+      <div id="wizard-summary-channel" class="callout hidden"></div>
+      <div id="wizard-capabilities" class="card-list"></div>
+      <div class="form-actions">
+        <button type="button" class="button secondary" data-wizard-back="youtube">Back</button>
+        <button type="button" class="button primary" id="wizard-activate">Activate automation</button>
+      </div>
+    </div>
   </dialog>
 
   <script src="/app.js" defer></script>

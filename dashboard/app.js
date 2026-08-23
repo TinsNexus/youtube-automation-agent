@@ -941,6 +941,10 @@ document.addEventListener('click', async event => {
   const go = event.target.closest('[data-go]');
   if (go) return switchView(go.dataset.go);
   if (event.target.closest('[data-close]')) return event.target.closest('dialog').close();
+  const wizardBack = event.target.closest('[data-wizard-back]');
+  if (wizardBack) return wizardShowStep(wizardBack.dataset.wizardBack);
+  const wizardGoto = event.target.closest('[data-wizard-goto]');
+  if (wizardGoto) return wizardShowStep(wizardGoto.dataset.wizardGoto);
 
   const open = event.target.closest('[data-open-content]');
   if (open) return openContent(open.dataset.openContent);
@@ -1325,6 +1329,175 @@ $('#profile-form').addEventListener('submit', async event => {
 
 $('#api-key-button').addEventListener('click', () => {
   if (requestApiKey() !== null) showToast('Dashboard API key saved in this browser.');
+});
+
+// Setup wizard — replaces `npm run credentials:setup` / `npm run walkthrough`
+// for people running the packaged app, which has no terminal.
+const WIZARD_STEPS = ['ai', 'video', 'youtube', 'summary'];
+const WIZARD_TITLES = { ai: 'AI provider', video: 'Video provider', youtube: 'Connect YouTube', summary: 'Ready to activate' };
+let wizardProviders = null;
+let wizardYoutubePoll = null;
+
+function wizardShowStep(step) {
+  if (!WIZARD_STEPS.includes(step)) return;
+  $$('.wizard-step').forEach(el => el.classList.remove('active'));
+  $(`#wizard-step-${step}`).classList.add('active');
+  $('#wizard-step-label').textContent = `STEP ${WIZARD_STEPS.indexOf(step) + 1} OF ${WIZARD_STEPS.length}`;
+  $('#wizard-step-title').textContent = WIZARD_TITLES[step];
+  if (step !== 'youtube') clearInterval(wizardYoutubePoll);
+  if (step === 'summary') wizardRenderSummary();
+}
+
+async function wizardLoadProviders() {
+  if (wizardProviders) return wizardProviders;
+  wizardProviders = await api('/api/setup/providers');
+  $('#wizard-ai-provider').innerHTML = Object.entries(wizardProviders.aiProviders)
+    .map(([id, guide]) => `<option value="${id}">${escapeHTML(guide.label)}</option>`).join('');
+  $('#wizard-video-provider').innerHTML = Object.entries(wizardProviders.videoProviders)
+    .map(([id, guide]) => `<option value="${id}">${escapeHTML(guide.label)}</option>`).join('');
+  wizardUpdateAiModelOptions();
+  wizardUpdateVideoFields();
+  return wizardProviders;
+}
+
+function wizardUpdateAiModelOptions() {
+  const guide = wizardProviders?.aiProviders[$('#wizard-ai-provider').value];
+  if (!guide) return;
+  $('#wizard-ai-model').innerHTML = (guide.models || []).map(m => `<option value="${escapeHTML(m)}">${escapeHTML(m)}</option>`).join('');
+  if (guide.defaultModel) $('#wizard-ai-model').value = guide.defaultModel;
+  $('#wizard-ai-instructions').innerHTML = `Get a key from <a href="${guide.keyUrl}" target="_blank" rel="noopener">${escapeHTML(guide.label)}</a> (${escapeHTML(guide.keyHint || '')}). Covers: ${escapeHTML(guide.covers || '')}`;
+}
+
+function wizardUpdateVideoFields() {
+  const providerId = $('#wizard-video-provider').value;
+  const guide = wizardProviders?.videoProviders[providerId];
+  const needsKey = providerId !== 'slideshow';
+  $('#wizard-video-key-row').classList.toggle('hidden', !needsKey);
+  if (needsKey && guide) {
+    $('#wizard-video-key-label').textContent = guide.credentialName || 'API key';
+    $('#wizard-video-secret-row').classList.toggle('hidden', !guide.secretName);
+    if (guide.secretName) $('#wizard-video-secret-label').textContent = guide.secretName;
+  }
+}
+
+function wizardShowYoutubeConnected(youtube) {
+  const html = `${youtube.channelThumbnail ? `<img src="${escapeHTML(youtube.channelThumbnail)}" alt="" style="width:28px;height:28px;border-radius:50%;vertical-align:middle;margin-right:8px;">` : ''}Connected: <strong>${escapeHTML(youtube.channelTitle || 'Your channel')}</strong>`;
+  for (const id of ['#wizard-youtube-connected', '#wizard-summary-channel']) {
+    const el = $(id);
+    if (!el) continue;
+    el.classList.remove('hidden');
+    el.innerHTML = html;
+  }
+}
+
+function wizardPollYoutube() {
+  clearInterval(wizardYoutubePoll);
+  wizardYoutubePoll = setInterval(async () => {
+    try {
+      const status = await api('/api/setup/status');
+      if (status.youtube.connected) {
+        clearInterval(wizardYoutubePoll);
+        wizardShowYoutubeConnected(status.youtube);
+        showToast(`YouTube connected: ${status.youtube.channelTitle}`);
+        setTimeout(() => wizardShowStep('summary'), 900);
+      }
+    } catch (_error) { /* keep polling — a transient network hiccup shouldn't stop it */ }
+  }, 2000);
+}
+
+async function wizardRenderSummary() {
+  const status = await api('/api/setup/status');
+  const rows = [
+    { ok: Boolean(status.aiProviderConfigured), label: 'Write scripts & pick topics' },
+    { ok: Boolean(status.aiProviderConfigured), label: 'Generate images & voice narration' },
+    { ok: status.ffmpegAvailable, label: 'Assemble real .mp4 videos' },
+    { ok: Boolean(status.videoProviderConfigured) && status.videoProviderConfigured !== 'slideshow', label: 'Generate AI video clips (optional)' },
+    { ok: status.youtube.connected, label: 'Upload to YouTube' }
+  ];
+  $('#wizard-capabilities').innerHTML = rows.map(row => `<div class="card">${row.ok ? '✓' : '✗'} ${escapeHTML(row.label)}</div>`).join('');
+  if (status.youtube.connected) wizardShowYoutubeConnected(status.youtube);
+}
+
+$('#setup-wizard-button').addEventListener('click', async () => {
+  await wizardLoadProviders();
+  wizardShowStep('ai');
+  $('#setup-wizard-dialog').showModal();
+});
+
+$('#setup-wizard-dialog').addEventListener('close', () => clearInterval(wizardYoutubePoll));
+
+$('#wizard-ai-provider').addEventListener('change', wizardUpdateAiModelOptions);
+$('#wizard-video-provider').addEventListener('change', wizardUpdateVideoFields);
+
+$('#wizard-ai-test').addEventListener('click', async () => {
+  const providerId = $('#wizard-ai-provider').value;
+  const apiKey = $('#wizard-ai-key').value.trim();
+  const model = $('#wizard-ai-model').value;
+  if (!apiKey) return showToast('Enter an API key first.', 'error');
+  const button = $('#wizard-ai-test');
+  button.disabled = true;
+  button.textContent = 'Testing…';
+  try {
+    await api('/api/setup/ai-provider', { method: 'POST', body: JSON.stringify({ providerId, apiKey, model }) });
+    showToast('AI provider connected.');
+    wizardShowStep('video');
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Test & save';
+  }
+});
+
+$('#wizard-video-next').addEventListener('click', async () => {
+  const providerId = $('#wizard-video-provider').value;
+  if (providerId === 'slideshow') return wizardShowStep('youtube');
+  const apiKey = $('#wizard-video-key').value.trim();
+  const secret = $('#wizard-video-secret').value.trim();
+  if (!apiKey) return showToast('Enter the provider key, or switch back to Local slideshow.', 'error');
+  try {
+    await api('/api/setup/video-provider', { method: 'POST', body: JSON.stringify({ providerId, apiKey, secret: secret || undefined }) });
+    showToast('Video provider saved.');
+    wizardShowStep('youtube');
+  } catch (error) {
+    showToast(error.message, 'error');
+  }
+});
+
+$('#wizard-youtube-connect').addEventListener('click', async () => {
+  const clientId = $('#wizard-yt-client-id').value.trim();
+  const clientSecret = $('#wizard-yt-client-secret').value.trim();
+  if (!clientId || !clientSecret) return showToast('Enter both the Client ID and Client Secret.', 'error');
+  const button = $('#wizard-youtube-connect');
+  button.disabled = true;
+  try {
+    await api('/api/setup/youtube/credentials', { method: 'POST', body: JSON.stringify({ clientId, clientSecret }) });
+    const { url } = await api('/api/setup/youtube/oauth-url');
+    window.open(url, '_blank');
+    $('#wizard-youtube-status').textContent = 'Waiting for you to finish in the browser tab that just opened…';
+    wizardPollYoutube();
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('#wizard-activate').addEventListener('click', async () => {
+  const button = $('#wizard-activate');
+  button.disabled = true;
+  button.textContent = 'Activating…';
+  try {
+    await api('/api/setup/complete', { method: 'POST' });
+    showToast('Setup complete — automation is active.');
+    $('#setup-wizard-dialog').close();
+    await refreshDashboard(true);
+  } catch (error) {
+    showToast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Activate automation';
+  }
 });
 
 const initialView = location.hash.slice(1);

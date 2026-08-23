@@ -26,6 +26,9 @@ const { SceneRepairService } = require('./utils/scene-repair-service');
 const { ShortsRepurposingService } = require('./utils/shorts-repurposing-service');
 const { version } = require('./package.json');
 const chalk = require('chalk');
+const crypto = require('crypto');
+const { google } = require('googleapis');
+const { AI_PROVIDER_GUIDE, VIDEO_PROVIDER_GUIDE, SetupWalkthrough } = require('./walkthrough');
 
 class YouTubeAutomationAgent {
   constructor() {
@@ -93,6 +96,8 @@ class YouTubeAutomationAgent {
         return true;
       }
       
+      this.credentials.syncEnvVars();
+
       // Initialize agents
       this.logger.info('Initializing agents...');
       await this.initializeAgents();
@@ -130,6 +135,68 @@ class YouTubeAutomationAgent {
     } catch (error) {
       this.logger.error('Failed to initialize:', error);
       return false;
+    }
+  }
+
+  // Activates the pipeline after the in-app setup wizard finishes saving
+  // credentials, without restarting the server. Deliberately does NOT touch
+  // this.db or call setupAPI() again — both already ran once during the
+  // initial initialize(), whichever branch it took.
+  async completeSetup() {
+    if (!this.setupRequired) {
+      return { alreadyActive: true };
+    }
+    if (this._completingSetup) {
+      return this._completingSetup;
+    }
+
+    this._completingSetup = (async () => {
+      const credentialsValid = await this.credentials.validateAll();
+      if (!credentialsValid) {
+        const error = new Error('Setup is still incomplete — an AI provider and a connected YouTube channel are both required');
+        error.status = 409;
+        throw error;
+      }
+
+      this.credentials.syncEnvVars();
+      this.readiness = new ProductionReadinessService(this.db, this.credentials);
+
+      this.logger.info('Initializing agents...');
+      await this.initializeAgents();
+      this.scenes = this.agents.production?.sceneRepair || new SceneRepairService(
+        this.db,
+        this.agents.production?.aiVideoGenerator,
+        { logger: this.logger }
+      );
+      this.shorts = new ShortsRepurposingService(this.db, this.agents.publishing, { logger: this.logger });
+
+      const capabilities = await this.logCapabilitySummary();
+      if (capabilities.hasText && capabilities.hasFFmpeg && capabilities.hasUpload) {
+        await this.activation.markSetupReady(capabilities);
+      }
+
+      this.setupRequired = false;
+
+      if (!this.scheduler) {
+        this.logger.info('Setting up automation scheduler...');
+        this.scheduler = new DailyAutomation(this.agents, this.db, {
+          generateContent: input => this.queueScheduledContent(input)
+        });
+        await this.scheduler.initialize();
+      }
+
+      if (await this.db.getSetting('automation_paused') === 'true') {
+        await this.scheduler.pauseAutomation();
+      }
+
+      this.logger.success('Setup completed — automation pipeline activated');
+      return { alreadyActive: false, agents: Object.keys(this.agents), capabilities };
+    })();
+
+    try {
+      return await this._completingSetup;
+    } finally {
+      this._completingSetup = null;
     }
   }
 
@@ -415,6 +482,7 @@ class YouTubeAutomationAgent {
     });
 
     this.setupOperatorAPI();
+    this.setupSetupWizardAPI();
   }
 
   setupOperatorAPI() {
@@ -1002,6 +1070,226 @@ class YouTubeAutomationAgent {
     this.app.post('/api/notifications/:notificationId/read', protect, async (req, res) => {
       await this.db.markNotificationRead(req.params.notificationId);
       return res.json({ success: true });
+    });
+  }
+
+  escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch]));
+  }
+
+  // Serializes AI key validation (SetupWalkthrough.validateAIKey temporarily
+  // mutates process.env's provider keys) so two concurrent wizard requests
+  // can't race on that shared, process-wide state.
+  async validateAIKeyWithSerializationGuard(guide, apiKey, model) {
+    if (this._setupValidationInFlight) {
+      return { ok: false, error: 'Another validation is already in progress — try again in a moment' };
+    }
+    this._setupValidationInFlight = true;
+    try {
+      const walkthrough = new SetupWalkthrough();
+      const ok = await walkthrough.validateAIKey(guide, apiKey, model);
+      return ok ? { ok: true } : { ok: false, error: 'That key did not work. Double-check it and try again.' };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    } finally {
+      this._setupValidationInFlight = false;
+    }
+  }
+
+  setupSetupWizardAPI() {
+    const protect = this.requireAPIKey();
+
+    this.app.get('/api/setup/status', async (_req, res) => {
+      const creds = this.credentials.credentials || {};
+      const tokens = this.credentials.tokens || {};
+      const { checkFFmpeg } = require('./utils/ffmpeg');
+
+      let aiProviderConfigured = null;
+      if (creds.openai?.apiKey) aiProviderConfigured = 'openai';
+      else if (creds.gemini?.apiKey) aiProviderConfigured = 'gemini';
+      else if (creds.aiProvider?.apiKey) aiProviderConfigured = creds.aiProvider.provider;
+
+      const youtube = { connected: false, channelTitle: null, channelThumbnail: null };
+      if (creds.youtube && tokens.youtube) {
+        try {
+          const youtubeClient = this.credentials.getYouTubeClient();
+          const response = await youtubeClient.channels.list({ part: 'snippet', mine: true });
+          const channel = response.data.items?.[0];
+          youtube.connected = true;
+          youtube.channelTitle = channel?.snippet?.title || null;
+          youtube.channelThumbnail = channel?.snippet?.thumbnails?.default?.url || null;
+        } catch (_error) {
+          youtube.connected = false;
+        }
+      }
+
+      res.json({
+        setupRequired: this.setupRequired,
+        aiProviderConfigured,
+        videoProviderConfigured: await this.db.getSetting('video_provider'),
+        youtube,
+        ffmpegAvailable: await checkFFmpeg()
+      });
+    });
+
+    this.app.get('/api/setup/providers', (_req, res) => {
+      const sanitize = guide => {
+        const { save: _save, validationCreds: _validationCreds, ...rest } = guide;
+        return rest;
+      };
+      res.json({
+        aiProviders: Object.fromEntries(Object.entries(AI_PROVIDER_GUIDE).map(([id, guide]) => [id, sanitize(guide)])),
+        videoProviders: Object.fromEntries(Object.entries(VIDEO_PROVIDER_GUIDE).map(([id, guide]) => [id, sanitize(guide)]))
+      });
+    });
+
+    this.app.post('/api/setup/ai-provider', protect, async (req, res) => {
+      try {
+        const { providerId, apiKey, model } = req.body || {};
+        const guide = AI_PROVIDER_GUIDE[providerId];
+        if (!guide || !apiKey) return res.status(400).json({ success: false, error: 'providerId and apiKey are required' });
+
+        const validation = await this.validateAIKeyWithSerializationGuard(guide, apiKey, model);
+        if (!validation.ok) return res.status(400).json({ success: false, error: validation.error });
+
+        guide.save(this.credentials.credentials, apiKey, model);
+        await this.credentials.saveCredentials();
+        res.json({ success: true });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/setup/video-provider', protect, async (req, res) => {
+      try {
+        const { providerId, apiKey, secret } = req.body || {};
+        if (providerId === 'slideshow' || !providerId) {
+          await this.db.setSetting('video_provider', 'slideshow');
+          return res.json({ success: true });
+        }
+        const guide = VIDEO_PROVIDER_GUIDE[providerId];
+        if (!guide) return res.status(400).json({ success: false, error: 'Unknown video provider' });
+        if (!apiKey) return res.status(400).json({ success: false, error: `${guide.credentialName || 'An API key'} is required` });
+
+        guide.save(this.credentials.credentials, apiKey, secret);
+        await this.credentials.saveCredentials();
+        await this.db.setSetting('video_provider', providerId);
+        res.json({ success: true });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/setup/youtube/credentials', protect, async (req, res) => {
+      try {
+        const { clientId, clientSecret } = req.body || {};
+        if (!clientId || !clientSecret) {
+          return res.status(400).json({ success: false, error: 'clientId and clientSecret are required' });
+        }
+        const redirectUri = `${req.protocol}://${req.get('host')}/api/setup/youtube/callback`;
+        this.credentials.credentials.youtube = {
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uris: [redirectUri]
+        };
+        await this.credentials.saveCredentials();
+        res.json({ success: true, redirectUri });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get('/api/setup/youtube/oauth-url', protect, (_req, res) => {
+      try {
+        const creds = this.credentials.credentials.youtube;
+        if (!creds) return res.status(400).json({ success: false, error: 'Save YouTube client credentials first' });
+
+        const redirectUri = creds.redirect_uris[0];
+        const state = crypto.randomBytes(24).toString('hex');
+        this._oauthStates = this._oauthStates || new Map();
+        for (const [key, value] of this._oauthStates) {
+          if (Date.now() - value.timestamp > 600000) this._oauthStates.delete(key);
+        }
+        this._oauthStates.set(state, { timestamp: Date.now(), redirectUri });
+
+        const oauth2Client = new google.auth.OAuth2(creds.client_id, creds.client_secret, redirectUri);
+        const url = oauth2Client.generateAuthUrl({
+          access_type: 'offline',
+          scope: [
+            'https://www.googleapis.com/auth/youtube.upload',
+            'https://www.googleapis.com/auth/youtube',
+            'https://www.googleapis.com/auth/youtube.readonly',
+            'https://www.googleapis.com/auth/yt-analytics.readonly'
+          ],
+          prompt: 'consent',
+          state
+        });
+        res.json({ success: true, url });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get('/api/setup/youtube/callback', async (req, res) => {
+      const page = (title, message) =>
+        `<!doctype html><html><head><meta charset="utf-8"><title>${this.escapeHtml(title)}</title></head>` +
+        `<body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#111;color:#eee;">` +
+        `<div style="text-align:center;max-width:420px;"><h1>${this.escapeHtml(title)}</h1><p>${this.escapeHtml(message)}</p></div>` +
+        `</body></html>`;
+
+      try {
+        const { code, state, error } = req.query;
+        if (error) return res.status(400).type('html').send(page('Authorization declined', String(error)));
+
+        this._oauthStates = this._oauthStates || new Map();
+        const stateData = state && this._oauthStates.get(state);
+        if (!stateData) return res.status(400).type('html').send(page('Link expired', 'This authorization link is no longer valid. Close this window and start again from the setup wizard.'));
+        this._oauthStates.delete(state);
+
+        if (!code) return res.status(400).type('html').send(page('Missing code', 'Google did not return an authorization code. Close this window and try again.'));
+
+        const creds = this.credentials.credentials.youtube;
+        const oauth2Client = new google.auth.OAuth2(creds.client_id, creds.client_secret, stateData.redirectUri);
+        const { tokens } = await oauth2Client.getToken(code);
+        this.credentials.tokens.youtube = tokens;
+        await this.credentials.saveTokens();
+
+        return res.type('html').send(page('YouTube connected', 'You can close this window and return to the setup wizard.'));
+      } catch (error) {
+        return res.status(500).type('html').send(page('Connection failed', error.message));
+      }
+    });
+
+    this.app.post('/api/setup/test-connections', protect, async (req, res) => {
+      try {
+        const results = await this.credentials.testConnections();
+        const creds = this.credentials.credentials;
+        let guide = null, apiKey = null, model = null;
+        if (creds.openai?.apiKey) { guide = AI_PROVIDER_GUIDE.openai; apiKey = creds.openai.apiKey; model = creds.openai.model; }
+        else if (creds.gemini?.apiKey) { guide = AI_PROVIDER_GUIDE.gemini; apiKey = creds.gemini.apiKey; model = creds.gemini.model; }
+        else if (creds.aiProvider?.apiKey) { guide = AI_PROVIDER_GUIDE[creds.aiProvider.provider]; apiKey = creds.aiProvider.apiKey; model = creds.aiProvider.model; }
+
+        if (guide) {
+          const validation = await this.validateAIKeyWithSerializationGuard(guide, apiKey, model);
+          results.aiProvider = validation.ok;
+        } else {
+          results.aiProvider = false;
+        }
+        res.json({ success: true, results });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/setup/complete', protect, async (req, res) => {
+      try {
+        const result = await this.completeSetup();
+        res.json({ success: true, ...result });
+      } catch (error) {
+        res.status(error.status || 500).json({ success: false, error: error.message });
+      }
     });
   }
 
