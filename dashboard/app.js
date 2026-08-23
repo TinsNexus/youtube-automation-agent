@@ -573,40 +573,40 @@ function selectOptions(options, selected) {
 
 function renderSourceEditor(source = {}, disabled = false) {
   return `<article class="provenance-item" data-provenance-source data-id="${escapeHTML(source.id || '')}" data-published-at="${escapeHTML(source.publishedAt || '')}" data-accessed-at="${escapeHTML(source.accessedAt || '')}">
-    <div class="provenance-item-heading"><strong>Research source</strong><button type="button" class="text-button danger-text" data-remove-provenance ${disabled ? 'disabled' : ''}>Remove</button></div>
-    <label><span>URL</span><input data-field="url" type="url" value="${escapeHTML(source.url || '')}" placeholder="https://..." required ${disabled ? 'disabled' : ''}></label>
+    <div class="provenance-item-heading"><strong>${t('content.source_heading')}</strong><button type="button" class="text-button danger-text" data-remove-provenance ${disabled ? 'disabled' : ''}>${t('content.remove')}</button></div>
+    <label><span>${t('content.url_label')}</span><input data-field="url" type="url" value="${escapeHTML(source.url || '')}" placeholder="${escapeHTML(t('content.url_placeholder'))}" required ${disabled ? 'disabled' : ''}></label>
     <div class="form-grid two">
-      <label><span>Title</span><input data-field="title" value="${escapeHTML(source.title || '')}" maxlength="300" ${disabled ? 'disabled' : ''}></label>
-      <label><span>Publisher</span><input data-field="publisher" value="${escapeHTML(source.publisher || '')}" maxlength="200" ${disabled ? 'disabled' : ''}></label>
-      <label><span>Type</span><select data-field="sourceType" ${disabled ? 'disabled' : ''}>${selectOptions([
-        ['official', 'Official source'], ['article', 'Article'], ['video', 'Video'], ['dataset', 'Dataset'], ['asset', 'Asset or license'], ['other', 'Other']
+      <label><span>${t('content.title_label')}</span><input data-field="title" value="${escapeHTML(source.title || '')}" maxlength="300" ${disabled ? 'disabled' : ''}></label>
+      <label><span>${t('content.publisher_label')}</span><input data-field="publisher" value="${escapeHTML(source.publisher || '')}" maxlength="200" ${disabled ? 'disabled' : ''}></label>
+      <label><span>${t('content.type_label')}</span><select data-field="sourceType" ${disabled ? 'disabled' : ''}>${selectOptions([
+        ['official', t('content.source_type_official')], ['article', t('content.source_type_article')], ['video', t('content.source_type_video')], ['dataset', t('content.source_type_dataset')], ['asset', t('content.source_type_asset')], ['other', t('content.source_type_other')]
       ], source.sourceType || 'other')}</select></label>
-      <label><span>Review status</span><select data-field="status" ${disabled ? 'disabled' : ''}>${selectOptions([
-        ['pending', 'Pending review'], ['verified', 'Verified'], ['rejected', 'Rejected']
+      <label><span>${t('content.review_status_label')}</span><select data-field="status" ${disabled ? 'disabled' : ''}>${selectOptions([
+        ['pending', t('content.source_status_pending')], ['verified', t('content.source_status_verified')], ['rejected', t('content.source_status_rejected')]
       ], source.status || 'pending')}</select></label>
     </div>
-    <label><span>Evidence notes</span><textarea data-field="notes" rows="2" maxlength="1000" ${disabled ? 'disabled' : ''}>${escapeHTML(source.notes || '')}</textarea></label>
-    ${source.url ? `<a class="source-link" href="${escapeHTML(source.url)}" target="_blank" rel="noopener">Open source ↗</a>` : ''}
+    <label><span>${t('content.evidence_notes_label')}</span><textarea data-field="notes" rows="2" maxlength="1000" ${disabled ? 'disabled' : ''}>${escapeHTML(source.notes || '')}</textarea></label>
+    ${source.url ? `<a class="source-link" href="${escapeHTML(source.url)}" target="_blank" rel="noopener">${t('content.open_source_link')}</a>` : ''}
   </article>`;
 }
 
 function renderClaimEditor(claim = {}, sources = [], disabled = false) {
   const linked = new Set(claim.sourceIds || []);
   return `<article class="provenance-item ${claim.riskLevel === 'high' ? 'high-risk' : ''}" data-provenance-claim data-id="${escapeHTML(claim.id || '')}">
-    <div class="provenance-item-heading"><strong>Factual claim</strong><button type="button" class="text-button danger-text" data-remove-provenance ${disabled ? 'disabled' : ''}>Remove</button></div>
-    <label><span>Claim</span><textarea data-field="text" rows="3" maxlength="1000" required ${disabled ? 'disabled' : ''}>${escapeHTML(claim.text || '')}</textarea></label>
+    <div class="provenance-item-heading"><strong>${t('content.claim_heading')}</strong><button type="button" class="text-button danger-text" data-remove-provenance ${disabled ? 'disabled' : ''}>${t('content.remove')}</button></div>
+    <label><span>${t('content.claim_label')}</span><textarea data-field="text" rows="3" maxlength="1000" required ${disabled ? 'disabled' : ''}>${escapeHTML(claim.text || '')}</textarea></label>
     <div class="form-grid two">
-      <label><span>Risk</span><select data-field="riskLevel" ${disabled ? 'disabled' : ''}>${selectOptions([
-        ['standard', 'Standard'], ['high', 'High risk']
+      <label><span>${t('content.risk_label')}</span><select data-field="riskLevel" ${disabled ? 'disabled' : ''}>${selectOptions([
+        ['standard', t('content.risk_standard')], ['high', t('content.risk_high')]
       ], claim.riskLevel || 'standard')}</select></label>
-      <label><span>Resolution</span><select data-field="status" ${disabled ? 'disabled' : ''}>${selectOptions([
-        ['pending', 'Pending'], ['supported', 'Supported'], ['unsupported', 'Unsupported'], ['waived', 'Waived with note']
+      <label><span>${t('content.resolution_label')}</span><select data-field="status" ${disabled ? 'disabled' : ''}>${selectOptions([
+        ['pending', t('content.claim_status_pending')], ['supported', t('content.claim_status_supported')], ['unsupported', t('content.claim_status_unsupported')], ['waived', t('content.claim_status_waived')]
       ], claim.status || 'pending')}</select></label>
     </div>
-    <fieldset class="source-checklist" ${disabled ? 'disabled' : ''}><legend>Supporting sources</legend>
-      ${sources.length ? sources.map(source => `<label><input type="checkbox" data-claim-source="${escapeHTML(source.id)}" ${linked.has(source.id) ? 'checked' : ''}> ${escapeHTML(source.title || source.url)}</label>`).join('') : '<small>Add a source before marking this claim supported.</small>'}
+    <fieldset class="source-checklist" ${disabled ? 'disabled' : ''}><legend>${t('content.supporting_sources_legend')}</legend>
+      ${sources.length ? sources.map(source => `<label><input type="checkbox" data-claim-source="${escapeHTML(source.id)}" ${linked.has(source.id) ? 'checked' : ''}> ${escapeHTML(source.title || source.url)}</label>`).join('') : `<small>${t('content.add_source_before_claim')}</small>`}
     </fieldset>
-    <label><span>Reviewer notes</span><textarea data-field="notes" rows="2" maxlength="1000" placeholder="Required when waived" ${disabled ? 'disabled' : ''}>${escapeHTML(claim.notes || '')}</textarea></label>
+    <label><span>${t('content.reviewer_notes_label')}</span><textarea data-field="notes" rows="2" maxlength="1000" placeholder="${escapeHTML(t('content.required_when_waived_placeholder'))}" ${disabled ? 'disabled' : ''}>${escapeHTML(claim.notes || '')}</textarea></label>
   </article>`;
 }
 
@@ -614,15 +614,15 @@ function renderProvenanceEditor(provenance = {}, canReview = true) {
   const sources = provenance.sources || [];
   const claims = provenance.claims || [];
   const summary = provenance.summary || {};
-  const statusLabel = provenance.status === 'verified' ? 'Evidence verified' : provenance.status === 'not_required' ? 'No claims declared' : `${summary.unresolvedClaims || 0} unresolved`;
+  const statusLabel = provenance.status === 'verified' ? t('content.evidence_verified') : provenance.status === 'not_required' ? t('content.no_claims_declared') : t('content.unresolved_count', { n: summary.unresolvedClaims || 0 });
   return `<section class="provenance-panel">
-    <div class="panel-heading"><div><p class="eyebrow">RESEARCH &amp; PROVENANCE</p><h3>Evidence desk</h3><p>Verify sources, connect every factual claim, and record disclosure before approval.</p></div><span class="status ${provenance.status === 'verified' || provenance.status === 'not_required' ? 'success' : 'warning'}">${escapeHTML(statusLabel)}</span></div>
-    <div class="provenance-toolbar"><strong>Sources</strong>${canReview ? '<button type="button" class="text-button" data-add-provenance-source>Add source +</button>' : ''}</div>
-    <div id="provenance-sources" class="provenance-list">${sources.map(source => renderSourceEditor(source, !canReview)).join('') || '<p class="empty-inline">No research sources attached.</p>'}</div>
-    <div class="provenance-toolbar"><strong>Claims</strong>${canReview ? '<button type="button" class="text-button" data-add-provenance-claim>Add claim +</button>' : ''}</div>
-    <div id="provenance-claims" class="provenance-list">${claims.map(claim => renderClaimEditor(claim, sources, !canReview)).join('') || '<p class="empty-inline">No externally verifiable claims declared.</p>'}</div>
-    <label class="toggle disclosure-toggle"><input id="contains-synthetic-media" type="checkbox" ${provenance.containsSyntheticMedia ? 'checked' : ''} ${canReview ? '' : 'disabled'}><span></span> Contains realistic altered or synthetic media requiring YouTube disclosure</label>
-    ${canReview ? '<button type="button" class="button secondary" data-save-provenance>Save evidence review</button>' : ''}
+    <div class="panel-heading"><div><p class="eyebrow">${t('content.provenance_eyebrow')}</p><h3>${t('content.evidence_desk_heading')}</h3><p>${t('content.evidence_desk_desc')}</p></div><span class="status ${provenance.status === 'verified' || provenance.status === 'not_required' ? 'success' : 'warning'}">${escapeHTML(statusLabel)}</span></div>
+    <div class="provenance-toolbar"><strong>${t('content.sources_label')}</strong>${canReview ? `<button type="button" class="text-button" data-add-provenance-source>${t('content.add_source_button')}</button>` : ''}</div>
+    <div id="provenance-sources" class="provenance-list">${sources.map(source => renderSourceEditor(source, !canReview)).join('') || `<p class="empty-inline">${t('content.no_sources_attached')}</p>`}</div>
+    <div class="provenance-toolbar"><strong>${t('content.claims_label')}</strong>${canReview ? `<button type="button" class="text-button" data-add-provenance-claim>${t('content.add_claim_button')}</button>` : ''}</div>
+    <div id="provenance-claims" class="provenance-list">${claims.map(claim => renderClaimEditor(claim, sources, !canReview)).join('') || `<p class="empty-inline">${t('content.no_claims_attached')}</p>`}</div>
+    <label class="toggle disclosure-toggle"><input id="contains-synthetic-media" type="checkbox" ${provenance.containsSyntheticMedia ? 'checked' : ''} ${canReview ? '' : 'disabled'}><span></span> ${t('content.synthetic_media_toggle')}</label>
+    ${canReview ? `<button type="button" class="button secondary" data-save-provenance>${t('content.save_evidence_button')}</button>` : ''}
   </section>`;
 }
 
@@ -635,18 +635,18 @@ function renderSceneEditor(item, canReview = true) {
   const narrationIssues = scenes.filter(scene => !['current', 'intentional_silence'].includes(scene.narrationStatus)).length;
   return `<section class="scene-repair-panel">
     <div class="panel-heading scene-heading">
-      <div><p class="eyebrow">SCENE REPAIR STUDIO</p><h3>Repair the timeline, not the whole video</h3><p>Edit, replace, or regenerate one scene. Changes remain draft-only until the timeline is rebuilt and approved.</p></div>
-      ${canReview ? `<button type="button" class="button primary small" data-rebuild-scenes="${escapeHTML(item.id)}">Rebuild final video</button>` : ''}
+      <div><p class="eyebrow">${t('content.scene_studio_eyebrow')}</p><h3>${t('content.scene_studio_heading')}</h3><p>${t('content.scene_studio_desc')}</p></div>
+      ${canReview ? `<button type="button" class="button primary small" data-rebuild-scenes="${escapeHTML(item.id)}">${t('content.rebuild_final_video_button')}</button>` : ''}
     </div>
     <div class="narration-recovery ${intentionalSilence ? 'intentional' : narrationIssues ? 'attention' : ''}">
-      <div><p class="eyebrow">NARRATION RELIABILITY</p><strong>${intentionalSilence ? 'Intentional silence confirmed' : narrationIssues ? `${narrationIssues} scene${narrationIssues === 1 ? '' : 's'} need narration` : 'Narration evidence is current'}</strong>
-      <p>${intentionalSilence ? escapeHTML(audio.silenceReason || '') : audio.error ? escapeHTML(audio.error) : 'Regenerate narration without replacing the scene visual. Approval remains blocked until audio is ready.'}</p>
-      ${audio.provider ? `<span class="narration-evidence">${escapeHTML(audio.provider)}${audio.model ? ` · ${escapeHTML(audio.model)}` : ''}${audio.externalTaskId ? ` · task ${escapeHTML(audio.externalTaskId)}` : ''}</span>` : ''}</div>
+      <div><p class="eyebrow">${t('content.narration_reliability_eyebrow')}</p><strong>${intentionalSilence ? t('content.silence_confirmed') : narrationIssues ? t('content.scenes_need_narration', { n: narrationIssues }) : t('content.narration_current')}</strong>
+      <p>${intentionalSilence ? escapeHTML(audio.silenceReason || '') : audio.error ? escapeHTML(audio.error) : t('content.narration_recovery_desc')}</p>
+      ${audio.provider ? `<span class="narration-evidence">${escapeHTML(audio.provider)}${audio.model ? ` · ${escapeHTML(audio.model)}` : ''}${audio.externalTaskId ? ` · ${escapeHTML(t('content.task_label', { id: audio.externalTaskId }))}` : ''}</span>` : ''}</div>
       ${canReview ? intentionalSilence
-        ? '<button type="button" class="button secondary small" data-require-narration>Require narration</button>'
-        : '<button type="button" class="button secondary small" data-intentional-silence>Use intentional silence</button>' : ''}
+        ? `<button type="button" class="button secondary small" data-require-narration>${t('content.require_narration_button')}</button>`
+        : `<button type="button" class="button secondary small" data-intentional-silence>${t('content.use_intentional_silence_button')}</button>` : ''}
     </div>
-    <div class="scene-summary"><strong>${scenes.length} scenes</strong><span>${Math.round(scenes.reduce((sum, scene) => sum + Number(scene.duration || 0), 0))}s timeline</span><span>${scenes.filter(scene => scene.status !== 'ready').length} pending repairs</span></div>
+    <div class="scene-summary"><strong>${t('content.scenes_count', { n: scenes.length })}</strong><span>${t('content.timeline_duration', { n: Math.round(scenes.reduce((sum, scene) => sum + Number(scene.duration || 0), 0)) })}</span><span>${t('content.pending_repairs', { n: scenes.filter(scene => scene.status !== 'ready').length })}</span></div>
     <div class="scene-list">
       ${scenes.map((scene, index) => {
         const disabled = !canReview || scene.locked;
@@ -654,33 +654,33 @@ function renderSceneEditor(item, canReview = true) {
         const preview = scene.assetUrl
           ? scene.assetType === 'video'
             ? `<video controls preload="metadata"><source src="${escapeHTML(scene.assetUrl)}"></video>`
-            : `<img src="${escapeHTML(scene.assetUrl)}" alt="${escapeHTML(scene.label)} scene asset">`
-          : '<div class="preview-placeholder">No scene asset</div>';
+            : `<img src="${escapeHTML(scene.assetUrl)}" alt="${escapeHTML(scene.label)} ${escapeHTML(t('content.scene_asset_alt_suffix'))}">`
+          : `<div class="preview-placeholder">${t('content.no_scene_asset')}</div>`;
         return `<article class="scene-card ${scene.locked ? 'locked' : ''}" data-scene-card="${escapeHTML(scene.id)}">
           <div class="scene-card-top">
             <div class="scene-preview">${preview}<span class="scene-number">${index + 1}</span></div>
             <div class="scene-identity">
               <div class="scene-status-row">${statusChip(scene.status)} ${statusChip(`narration_${scene.narrationStatus || 'unavailable'}`)}<span>r${scene.revision}</span></div>
-              <label><span>Scene label</span><input data-scene-field="label" maxlength="120" value="${escapeHTML(scene.label)}" ${disabled ? 'disabled' : ''}></label>
-              <label><span>Duration</span><input data-scene-field="duration" type="number" min="2" max="600" step="0.5" value="${escapeHTML(scene.duration)}" ${disabled ? 'disabled' : ''}></label>
+              <label><span>${t('content.scene_label_field')}</span><input data-scene-field="label" maxlength="120" value="${escapeHTML(scene.label)}" ${disabled ? 'disabled' : ''}></label>
+              <label><span>${t('content.duration_label')}</span><input data-scene-field="duration" type="number" min="2" max="600" step="0.5" value="${escapeHTML(scene.duration)}" ${disabled ? 'disabled' : ''}></label>
             </div>
           </div>
-          <label><span>Narration</span><textarea data-scene-field="scriptText" rows="4" maxlength="10000" ${disabled ? 'disabled' : ''}>${escapeHTML(scene.scriptText)}</textarea></label>
-          <label><span>Visual prompt</span><textarea data-scene-field="prompt" rows="3" maxlength="2000" ${disabled ? 'disabled' : ''}>${escapeHTML(scene.prompt)}</textarea></label>
-          ${verifiedSources.length ? `<fieldset class="source-checklist scene-sources" ${disabled ? 'disabled' : ''}><legend>Verified evidence linked to this narration</legend>${verifiedSources.map(source => `<label><input type="checkbox" data-scene-source value="${escapeHTML(source.id)}" ${sourceIds.has(source.id) ? 'checked' : ''}> ${escapeHTML(source.title)}</label>`).join('')}</fieldset>` : ''}
+          <label><span>${t('content.narration_field_label')}</span><textarea data-scene-field="scriptText" rows="4" maxlength="10000" ${disabled ? 'disabled' : ''}>${escapeHTML(scene.scriptText)}</textarea></label>
+          <label><span>${t('content.visual_prompt_label')}</span><textarea data-scene-field="prompt" rows="3" maxlength="2000" ${disabled ? 'disabled' : ''}>${escapeHTML(scene.prompt)}</textarea></label>
+          ${verifiedSources.length ? `<fieldset class="source-checklist scene-sources" ${disabled ? 'disabled' : ''}><legend>${t('content.verified_evidence_legend')}</legend>${verifiedSources.map(source => `<label><input type="checkbox" data-scene-source value="${escapeHTML(source.id)}" ${sourceIds.has(source.id) ? 'checked' : ''}> ${escapeHTML(source.title)}</label>`).join('')}</fieldset>` : ''}
           <div class="scene-options">
-            <label class="toggle"><input type="checkbox" data-scene-factual checked ${disabled ? 'disabled' : ''}><span></span> Narration changes may contain factual claims</label>
-            <span>Visual: ${escapeHTML(scene.provider || 'local')} ${scene.model ? `· ${escapeHTML(scene.model)}` : ''}</span>
+            <label class="toggle"><input type="checkbox" data-scene-factual checked ${disabled ? 'disabled' : ''}><span></span> ${t('content.narration_factual_toggle')}</label>
+            <span>${escapeHTML(t('content.visual_prefix'))} ${escapeHTML(scene.provider || t('content.local_default'))} ${scene.model ? `· ${escapeHTML(scene.model)}` : ''}</span>
           </div>
-          <div class="scene-narration-evidence"><span>Narration: ${escapeHTML(scene.narrationProvider || 'not generated')}${scene.narrationModel ? ` · ${escapeHTML(scene.narrationModel)}` : ''}${scene.narrationTaskId ? ` · task ${escapeHTML(scene.narrationTaskId)}` : ''}</span>${scene.narrationError ? `<span class="danger-text">${escapeHTML(scene.narrationError)}</span>` : ''}</div>
+          <div class="scene-narration-evidence"><span>${escapeHTML(t('content.narration_prefix'))} ${escapeHTML(scene.narrationProvider || t('content.not_generated'))}${scene.narrationModel ? ` · ${escapeHTML(scene.narrationModel)}` : ''}${scene.narrationTaskId ? ` · ${escapeHTML(t('content.task_label', { id: scene.narrationTaskId }))}` : ''}</span>${scene.narrationError ? `<span class="danger-text">${escapeHTML(scene.narrationError)}</span>` : ''}</div>
           ${canReview ? `<div class="scene-actions">
-            <button type="button" class="text-button" data-scene-move="up" ${disabled || index === 0 ? 'disabled' : ''}>↑ Earlier</button>
-            <button type="button" class="text-button" data-scene-move="down" ${disabled || index === scenes.length - 1 ? 'disabled' : ''}>↓ Later</button>
-            <button type="button" class="text-button approve" data-scene-save ${disabled ? 'disabled' : ''}>Save scene</button>
-            <button type="button" class="text-button" data-scene-narration ${disabled ? 'disabled' : ''}>Regenerate narration only</button>
-            <button type="button" class="text-button" data-scene-regenerate ${disabled ? 'disabled' : ''}>Regenerate scene</button>
-            <label class="text-button upload-button ${disabled ? 'disabled' : ''}">Replace asset<input type="file" data-scene-upload accept="image/png,image/jpeg,image/webp,video/mp4" ${disabled ? 'disabled' : ''}></label>
-            <button type="button" class="text-button" data-scene-lock>${scene.locked ? 'Unlock' : 'Lock'}</button>
+            <button type="button" class="text-button" data-scene-move="up" ${disabled || index === 0 ? 'disabled' : ''}>${t('content.move_earlier')}</button>
+            <button type="button" class="text-button" data-scene-move="down" ${disabled || index === scenes.length - 1 ? 'disabled' : ''}>${t('content.move_later')}</button>
+            <button type="button" class="text-button approve" data-scene-save ${disabled ? 'disabled' : ''}>${t('content.save_scene_button')}</button>
+            <button type="button" class="text-button" data-scene-narration ${disabled ? 'disabled' : ''}>${t('content.regenerate_narration_only_button')}</button>
+            <button type="button" class="text-button" data-scene-regenerate ${disabled ? 'disabled' : ''}>${t('content.regenerate_scene_button')}</button>
+            <label class="text-button upload-button ${disabled ? 'disabled' : ''}">${t('content.replace_asset_button')}<input type="file" data-scene-upload accept="image/png,image/jpeg,image/webp,video/mp4" ${disabled ? 'disabled' : ''}></label>
+            <button type="button" class="text-button" data-scene-lock>${scene.locked ? t('content.unlock_button') : t('content.lock_button')}</button>
           </div>` : ''}
         </article>`;
       }).join('')}
@@ -694,13 +694,13 @@ function renderShortsStudio(item) {
   const parentApproved = item.review_status === 'approved';
   return `<section class="shorts-studio">
     <div class="panel-heading shorts-heading">
-      <div><p class="eyebrow">SHORTS REPURPOSING STUDIO</p><h3>Turn one production into vertical reach</h3><p>Create local 9:16 excerpts with mobile captions. Drafts inherit the source production's evidence and still require separate approval.</p></div>
-      <button type="button" class="button secondary small" data-propose-shorts="${escapeHTML(item.id)}">${clips.length ? 'Refresh drafts' : 'Create 3 Short drafts'}</button>
+      <div><p class="eyebrow">${t('content.shorts_studio_eyebrow')}</p><h3>${t('content.shorts_studio_heading')}</h3><p>${t('content.shorts_studio_desc')}</p></div>
+      <button type="button" class="button secondary small" data-propose-shorts="${escapeHTML(item.id)}">${clips.length ? t('content.refresh_drafts_button') : t('content.create_short_drafts_button')}</button>
     </div>
     <div class="shorts-evidence ${parentApproved ? 'ready' : ''}">
-      <span>${parentApproved ? '✓ Source production approved' : 'Source approval required before scheduling'}</span>
-      <span>${escapeHTML(item.provenance?.status === 'verified' ? 'Evidence verified' : item.provenance?.status === 'not_required' ? 'No factual claims declared' : 'Evidence review incomplete')}</span>
-      <span>Local render · no new provider call</span>
+      <span>${parentApproved ? t('content.source_approved_badge') : t('content.source_approval_required')}</span>
+      <span>${escapeHTML(item.provenance?.status === 'verified' ? t('content.evidence_verified') : item.provenance?.status === 'not_required' ? t('content.no_factual_claims_declared') : t('content.evidence_review_incomplete'))}</span>
+      <span>${t('content.local_render_note')}</span>
     </div>
     ${clips.length ? `<div class="shorts-grid">${clips.map(clip => {
       const locked = ['scheduled', 'uploading', 'published', 'reconciliation_required'].includes(clip.status);
@@ -708,23 +708,23 @@ function renderShortsStudio(item) {
       return `<article class="short-card" data-short-card="${escapeHTML(clip.id)}">
         <div class="short-preview">${rendered
           ? `<video controls preload="metadata"><source src="${escapeHTML(clip.assetUrls.video)}" type="video/mp4"></video>`
-          : `<div class="short-placeholder"><strong>9:16</strong><span>${escapeHTML(label(clip.layout))} layout</span></div>`}</div>
+          : `<div class="short-placeholder"><strong>9:16</strong><span>${escapeHTML(t('content.layout_suffix', { layout: label(clip.layout) }))}</span></div>`}</div>
         <div class="short-editor">
           <div class="scene-status-row">${statusChip(clip.status)}<span>${Number(clip.duration || 0).toFixed(0)}s</span><span>${escapeHTML((clip.sourceSceneLabels || []).join(' + '))}</span></div>
-          <label><span>Short title</span><input data-short-field="title" maxlength="100" value="${escapeHTML(clip.title)}" ${locked ? 'disabled' : ''}></label>
-          <label><span>Description and parent-video CTA</span><textarea data-short-field="description" rows="3" maxlength="5000" ${locked ? 'disabled' : ''}>${escapeHTML(clip.description)}</textarea></label>
-          <label><span>Tags</span><input data-short-field="tags" value="${escapeHTML((clip.tags || []).join(', '))}" ${locked ? 'disabled' : ''}></label>
+          <label><span>${t('content.short_title_label')}</span><input data-short-field="title" maxlength="100" value="${escapeHTML(clip.title)}" ${locked ? 'disabled' : ''}></label>
+          <label><span>${t('content.short_description_label')}</span><textarea data-short-field="description" rows="3" maxlength="5000" ${locked ? 'disabled' : ''}>${escapeHTML(clip.description)}</textarea></label>
+          <label><span>${t('content.tags_label')}</span><input data-short-field="tags" value="${escapeHTML((clip.tags || []).join(', '))}" ${locked ? 'disabled' : ''}></label>
           <div class="form-grid two">
-            <label><span>Vertical layout</span><select data-short-field="layout" ${locked ? 'disabled' : ''}><option value="blur" ${clip.layout === 'blur' ? 'selected' : ''}>Blurred canvas</option><option value="crop" ${clip.layout === 'crop' ? 'selected' : ''}>Center crop</option><option value="stacked" ${clip.layout === 'stacked' ? 'selected' : ''}>Stacked focus</option></select></label>
-            <label><span>Publish time</span><input data-short-field="publishTime" type="datetime-local" value="${toLocalInput(clip.publishTime)}" ${locked ? 'disabled' : ''}></label>
-            <label><span>Privacy</span><select data-short-field="privacyStatus" ${locked ? 'disabled' : ''}><option value="private" ${clip.privacyStatus === 'private' ? 'selected' : ''}>Private</option><option value="unlisted" ${clip.privacyStatus === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="public" ${clip.privacyStatus === 'public' ? 'selected' : ''}>Public</option></select></label>
+            <label><span>${t('content.vertical_layout_label')}</span><select data-short-field="layout" ${locked ? 'disabled' : ''}><option value="blur" ${clip.layout === 'blur' ? 'selected' : ''}>${t('content.layout_blur')}</option><option value="crop" ${clip.layout === 'crop' ? 'selected' : ''}>${t('content.layout_crop')}</option><option value="stacked" ${clip.layout === 'stacked' ? 'selected' : ''}>${t('content.layout_stacked')}</option></select></label>
+            <label><span>${t('content.publish_time_label')}</span><input data-short-field="publishTime" type="datetime-local" value="${toLocalInput(clip.publishTime)}" ${locked ? 'disabled' : ''}></label>
+            <label><span>${t('content.privacy_label')}</span><select data-short-field="privacyStatus" ${locked ? 'disabled' : ''}><option value="private" ${clip.privacyStatus === 'private' ? 'selected' : ''}>${t('content.privacy_private')}</option><option value="unlisted" ${clip.privacyStatus === 'unlisted' ? 'selected' : ''}>${t('content.privacy_unlisted')}</option><option value="public" ${clip.privacyStatus === 'public' ? 'selected' : ''}>${t('content.privacy_public')}</option></select></label>
           </div>
           <p class="short-rationale">${escapeHTML(clip.rationale || '')}${clip.error ? `<br><span class="danger-text">${escapeHTML(clip.error)}</span>` : ''}</p>
-          ${clip.youtubeUrl ? `<a class="source-link" href="${escapeHTML(clip.youtubeUrl)}" target="_blank" rel="noopener">Open published Short ↗</a>` : ''}
-          ${!locked ? `<div class="short-actions"><button type="button" class="text-button" data-short-save>Save draft</button><button type="button" class="button secondary small" data-short-render>${rendered ? 'Render again' : 'Render 9:16'}</button><button type="button" class="button primary small" data-short-approve ${!parentApproved || clip.status !== 'rendered' ? 'disabled' : ''} title="${!parentApproved ? 'Approve the source production first' : clip.status !== 'rendered' ? 'Render this Short first' : 'Confirm and schedule this Short'}">Approve &amp; schedule</button></div>` : ''}
+          ${clip.youtubeUrl ? `<a class="source-link" href="${escapeHTML(clip.youtubeUrl)}" target="_blank" rel="noopener">${t('content.open_published_short_link')}</a>` : ''}
+          ${!locked ? `<div class="short-actions"><button type="button" class="text-button" data-short-save>${t('content.save_draft_button')}</button><button type="button" class="button secondary small" data-short-render>${rendered ? t('content.render_again_button') : t('content.render_short_button')}</button><button type="button" class="button primary small" data-short-approve ${!parentApproved || clip.status !== 'rendered' ? 'disabled' : ''} title="${!parentApproved ? escapeHTML(t('content.approve_source_first_tooltip')) : clip.status !== 'rendered' ? escapeHTML(t('content.render_short_first_tooltip')) : escapeHTML(t('content.confirm_schedule_short_tooltip'))}">${t('content.approve_schedule_button')}</button></div>` : ''}
         </div>
       </article>`;
-    }).join('')}</div>` : '<p class="empty-inline">No Short drafts yet. Create three candidates from the current scene timeline without calling a paid provider.</p>'}
+    }).join('')}</div>` : `<p class="empty-inline">${t('content.no_short_drafts')}</p>`}
   </section>`;
 }
 
@@ -733,7 +733,7 @@ async function openContent(productionId) {
   try {
     const item = await api(`/api/content/${encodeURIComponent(productionId)}`);
     const data = item.editorData || {};
-    const title = data.title || item.seo?.title || item.script?.title || item.strategy?.topic || 'Untitled content';
+    const title = data.title || item.seo?.title || item.script?.title || item.strategy?.topic || t('content.untitled_fallback');
     const description = data.description || item.seo?.description || '';
     const tags = data.tags || item.seo?.tags || [];
     const publishTime = data.publishTime || item.schedule?.publish_time || item.scheduled_publish_time;
@@ -742,22 +742,22 @@ async function openContent(productionId) {
     const selectedTitleVariant = Number(data.selectedTitleVariant || 0);
     const selectedThumbnailVariant = Number(data.selectedThumbnailVariant || 0);
     $('#content-detail').innerHTML = `
-      <div class="dialog-heading"><div><p class="eyebrow">CONTENT REVIEW</p><h2>${escapeHTML(title)}</h2><div class="meta-line">${statusChip(item.schedule?.status || item.review_status || item.status)} · Quality ${qualityScore(item.qualityChecks)}%</div></div><button type="button" class="close-button" data-close>×</button></div>
+      <div class="dialog-heading"><div><p class="eyebrow">${t('content.review_eyebrow')}</p><h2>${escapeHTML(title)}</h2><div class="meta-line">${statusChip(item.schedule?.status || item.review_status || item.status)} · ${escapeHTML(t('content.quality_label', { pct: qualityScore(item.qualityChecks) }))}</div></div><button type="button" class="close-button" data-close>×</button></div>
       <form id="content-review-form" class="editor content-review-editor">
         <div class="content-layout">
           <div>
-            <div class="preview">${item.assetUrls.video ? `<video controls preload="metadata" poster="${item.assetUrls.thumbnail || ''}"><source src="${item.assetUrls.video}" type="video/mp4"></video>` : item.assetUrls.thumbnail ? `<img src="${item.assetUrls.thumbnail}" alt="Generated thumbnail">` : '<div class="preview-placeholder">No playable preview was produced.</div>'}</div>
-            <div class="quality-grid">${(item.qualityChecks || []).map(check => `<div class="quality-check ${check.passed ? 'pass' : 'fail'}">${check.passed ? '✓' : '×'} ${escapeHTML(check.message)}</div>`).join('') || '<div class="quality-check">No quality results recorded.</div>'}</div>
+            <div class="preview">${item.assetUrls.video ? `<video controls preload="metadata" poster="${item.assetUrls.thumbnail || ''}"><source src="${item.assetUrls.video}" type="video/mp4"></video>` : item.assetUrls.thumbnail ? `<img src="${item.assetUrls.thumbnail}" alt="${escapeHTML(t('content.generated_thumbnail_alt'))}">` : `<div class="preview-placeholder">${t('content.no_preview_produced')}</div>`}</div>
+            <div class="quality-grid">${(item.qualityChecks || []).map(check => `<div class="quality-check ${check.passed ? 'pass' : 'fail'}">${check.passed ? '✓' : '×'} ${escapeHTML(check.message)}</div>`).join('') || `<div class="quality-check">${t('content.no_quality_results')}</div>`}</div>
             ${item.review_notes ? `<p class="callout">${escapeHTML(item.review_notes)}</p>` : ''}
           </div>
           <div class="editor">
-            <label><span>Title</span><input name="title" maxlength="100" value="${escapeHTML(title)}" required></label>
-            <label><span>Description</span><textarea name="description" rows="7">${escapeHTML(description)}</textarea></label>
-            <label><span>Tags</span><input name="tags" value="${escapeHTML(tags.join(', '))}"></label>
+            <label><span>${t('content.title_label')}</span><input name="title" maxlength="100" value="${escapeHTML(title)}" required></label>
+            <label><span>${t('content.description_label')}</span><textarea name="description" rows="7">${escapeHTML(description)}</textarea></label>
+            <label><span>${t('content.tags_label')}</span><input name="tags" value="${escapeHTML(tags.join(', '))}"></label>
             ${experiment ? `<section class="experiment-panel">
-              <div><p class="eyebrow">APPROVED LEARNING EXPERIMENT</p><strong>${escapeHTML(experiment.hypothesis)}</strong><p>Choose the packaging to ship. Nothing changes on YouTube until this content is approved and published.</p></div>
-              <label><span>Title variant</span><select name="selectedTitleVariant">${experiment.titleVariants.map((variant, index) => `<option value="${index}" data-title="${escapeHTML(variant.title)}" ${index === selectedTitleVariant ? 'selected' : ''}>${escapeHTML(variant.label)} — ${escapeHTML(variant.title)}</option>`).join('')}</select></label>
-              <div class="experiment-thumbnails">${experiment.thumbnailVariants.map((variant, index) => `<label class="experiment-thumb ${index === selectedThumbnailVariant ? 'selected' : ''}"><input type="radio" name="selectedThumbnailVariant" value="${index}" ${index === selectedThumbnailVariant ? 'checked' : ''}><img src="${escapeHTML(item.assetUrls.experimentThumbnails?.[index] || '')}" alt="${escapeHTML(variant.label)} thumbnail variant"><span>${escapeHTML(variant.label)}</span></label>`).join('')}</div>
+              <div><p class="eyebrow">${t('content.experiment_eyebrow')}</p><strong>${escapeHTML(experiment.hypothesis)}</strong><p>${t('content.experiment_desc')}</p></div>
+              <label><span>${t('content.title_variant_label')}</span><select name="selectedTitleVariant">${experiment.titleVariants.map((variant, index) => `<option value="${index}" data-title="${escapeHTML(variant.title)}" ${index === selectedTitleVariant ? 'selected' : ''}>${escapeHTML(variant.label)} — ${escapeHTML(variant.title)}</option>`).join('')}</select></label>
+              <div class="experiment-thumbnails">${experiment.thumbnailVariants.map((variant, index) => `<label class="experiment-thumb ${index === selectedThumbnailVariant ? 'selected' : ''}"><input type="radio" name="selectedThumbnailVariant" value="${index}" ${index === selectedThumbnailVariant ? 'checked' : ''}><img src="${escapeHTML(item.assetUrls.experimentThumbnails?.[index] || '')}" alt="${escapeHTML(t('content.thumbnail_variant_alt', { label: variant.label }))}"><span>${escapeHTML(variant.label)}</span></label>`).join('')}</div>
             </section>` : ''}
           </div>
         </div>
@@ -765,14 +765,14 @@ async function openContent(productionId) {
         ${renderShortsStudio(item)}
         ${renderProvenanceEditor(item.provenance, canReview)}
           <div class="form-grid two">
-            <label><span>Publish time</span><input name="publishTime" type="datetime-local" value="${toLocalInput(publishTime)}"></label>
-            <label><span>Privacy</span><select name="privacyStatus"><option value="private" ${data.privacyStatus === 'private' ? 'selected' : ''}>Private</option><option value="unlisted" ${data.privacyStatus === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="public" ${data.privacyStatus === 'public' ? 'selected' : ''}>Public</option></select></label>
+            <label><span>${t('content.publish_time_label')}</span><input name="publishTime" type="datetime-local" value="${toLocalInput(publishTime)}"></label>
+            <label><span>${t('content.privacy_label')}</span><select name="privacyStatus"><option value="private" ${data.privacyStatus === 'private' ? 'selected' : ''}>${t('content.privacy_private')}</option><option value="unlisted" ${data.privacyStatus === 'unlisted' ? 'selected' : ''}>${t('content.privacy_unlisted')}</option><option value="public" ${data.privacyStatus === 'public' ? 'selected' : ''}>${t('content.privacy_public')}</option></select></label>
           </div>
           <div class="settings-row">
-            <label class="toggle"><input name="factChecked" type="checkbox" ${data.factChecked ? 'checked' : ''}><span></span> Facts and claims reviewed</label>
-            <label class="toggle"><input name="rightsConfirmed" type="checkbox" ${data.rightsConfirmed ? 'checked' : ''}><span></span> Media rights confirmed</label>
+            <label class="toggle"><input name="factChecked" type="checkbox" ${data.factChecked ? 'checked' : ''}><span></span> ${t('content.facts_reviewed_toggle')}</label>
+            <label class="toggle"><input name="rightsConfirmed" type="checkbox" ${data.rightsConfirmed ? 'checked' : ''}><span></span> ${t('content.rights_confirmed_toggle')}</label>
           </div>
-          ${canReview ? `<div class="form-actions"><button type="button" class="button primary" data-approve-content="${escapeHTML(item.id)}">Approve & schedule</button><button type="button" class="button secondary" data-save-content="${escapeHTML(item.id)}">Save draft</button><button type="button" class="button danger" data-reject-content="${escapeHTML(item.id)}">Reject</button><button type="button" class="button ghost" data-retry-content="${escapeHTML(item.id)}">Regenerate</button></div>` : `<a class="button secondary" href="${escapeHTML(item.schedule?.youtube_url || '#')}" target="_blank" rel="noopener">Open on YouTube</a>`}
+          ${canReview ? `<div class="form-actions"><button type="button" class="button primary" data-approve-content="${escapeHTML(item.id)}">${t('content.approve_schedule_button')}</button><button type="button" class="button secondary" data-save-content="${escapeHTML(item.id)}">${t('content.save_draft_button')}</button><button type="button" class="button danger" data-reject-content="${escapeHTML(item.id)}">${t('content.reject_button')}</button><button type="button" class="button ghost" data-retry-content="${escapeHTML(item.id)}">${t('content.regenerate_button')}</button></div>` : `<a class="button secondary" href="${escapeHTML(item.schedule?.youtube_url || '#')}" target="_blank" rel="noopener">${t('content.open_youtube_link')}</a>`}
       </form>`;
     $('#content-review-form').dataset.productionId = item.id;
     $('#content-dialog').showModal();
