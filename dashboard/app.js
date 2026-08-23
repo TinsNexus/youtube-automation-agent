@@ -562,6 +562,7 @@ function switchView(view) {
   $('#view-eyebrow').textContent = titles[view][0];
   $('#view-title').textContent = titles[view][1];
   location.hash = view;
+  if (view === 'settings') renderIntegrationsPanel();
 }
 
 function selectOptions(options, selected) {
@@ -1499,6 +1500,170 @@ $('#wizard-activate').addEventListener('click', async () => {
     button.textContent = 'Activate automation';
   }
 });
+
+// Channel setup — "Integrations" panel. Shows the guided wizard CTA when
+// nothing is configured yet; once something is, shows the current values
+// inline, editable in place, instead of dumping the user back into the
+// multi-step wizard from scratch just to tweak one field.
+async function renderIntegrationsPanel() {
+  const panel = $('#integrations-panel');
+  const [status] = await Promise.all([api('/api/setup/status'), wizardLoadProviders()]);
+  const hasAnything = Boolean(status.aiProviderConfigured) || status.youtube.connected;
+
+  panel.innerHTML = hasAnything ? integrationsConfiguredHTML(status) : integrationsEmptyHTML();
+
+  if (!hasAnything) {
+    $('#settings-start-wizard').addEventListener('click', () => $('#setup-wizard-button').click());
+    return;
+  }
+
+  $('#settings-run-wizard').addEventListener('click', () => $('#setup-wizard-button').click());
+
+  const aiSelect = $('#settings-ai-provider');
+  aiSelect.innerHTML = Object.entries(wizardProviders.aiProviders)
+    .map(([id, guide]) => `<option value="${id}" ${id === status.aiProviderConfigured ? 'selected' : ''}>${escapeHTML(guide.label)}</option>`).join('');
+  const updateAiModels = () => {
+    const guide = wizardProviders.aiProviders[aiSelect.value];
+    $('#settings-ai-model').innerHTML = (guide.models || []).map(m => `<option value="${escapeHTML(m)}">${escapeHTML(m)}</option>`).join('');
+    const current = aiSelect.value === status.aiProviderConfigured ? status.aiModelConfigured : null;
+    $('#settings-ai-model').value = current || guide.defaultModel || '';
+  };
+  aiSelect.addEventListener('change', updateAiModels);
+  updateAiModels();
+
+  $('#settings-ai-save').addEventListener('click', async () => {
+    const providerId = aiSelect.value;
+    const apiKey = $('#settings-ai-key').value.trim();
+    const model = $('#settings-ai-model').value;
+    if (!apiKey && providerId !== status.aiProviderConfigured) {
+      return showToast('Enter an API key for this provider.', 'error');
+    }
+    try {
+      await api('/api/setup/ai-provider', { method: 'POST', body: JSON.stringify({ providerId, apiKey: apiKey || undefined, model }) });
+      showToast('AI provider saved.');
+      renderIntegrationsPanel();
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+  });
+
+  const videoSelect = $('#settings-video-provider');
+  const currentVideo = status.videoProviderConfigured || 'slideshow';
+  videoSelect.innerHTML = Object.entries(wizardProviders.videoProviders)
+    .map(([id, guide]) => `<option value="${id}" ${id === currentVideo ? 'selected' : ''}>${escapeHTML(guide.label)}</option>`).join('');
+  const updateVideoFields = () => {
+    const providerId = videoSelect.value;
+    const guide = wizardProviders.videoProviders[providerId];
+    const needsKey = providerId !== 'slideshow';
+    $('#settings-video-key-row').classList.toggle('hidden', !needsKey);
+    if (needsKey) {
+      $('#settings-video-key-label').textContent = guide.credentialName || 'API key';
+      $('#settings-video-secret-row').classList.toggle('hidden', !guide.secretName);
+      if (guide.secretName) $('#settings-video-secret-label').textContent = guide.secretName;
+    }
+  };
+  videoSelect.addEventListener('change', updateVideoFields);
+  updateVideoFields();
+
+  $('#settings-video-save').addEventListener('click', async () => {
+    const providerId = videoSelect.value;
+    const apiKey = $('#settings-video-key').value.trim();
+    const secret = $('#settings-video-secret').value.trim();
+    if (providerId !== 'slideshow' && !apiKey && providerId !== currentVideo) {
+      return showToast('Enter the provider key, or switch back to Local slideshow.', 'error');
+    }
+    try {
+      await api('/api/setup/video-provider', { method: 'POST', body: JSON.stringify({ providerId, apiKey: apiKey || undefined, secret: secret || undefined }) });
+      showToast('Video provider saved.');
+      renderIntegrationsPanel();
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+  });
+
+  $('#settings-youtube-connect').addEventListener('click', async () => {
+    const button = $('#settings-youtube-connect');
+    button.disabled = true;
+    try {
+      if (!status.youtube.hasClientCredentials) {
+        const clientId = $('#settings-yt-client-id').value.trim();
+        const clientSecret = $('#settings-yt-client-secret').value.trim();
+        if (!clientId || !clientSecret) {
+          showToast('Enter both the Client ID and Client Secret.', 'error');
+          return;
+        }
+        await api('/api/setup/youtube/credentials', { method: 'POST', body: JSON.stringify({ clientId, clientSecret }) });
+      }
+      const { url } = await api('/api/setup/youtube/oauth-url');
+      window.open(url, '_blank');
+      const statusEl = $('#settings-youtube-status');
+      statusEl.classList.remove('hidden');
+      statusEl.textContent = 'Waiting for you to finish in the browser tab that just opened…';
+      const poll = setInterval(async () => {
+        try {
+          const latest = await api('/api/setup/status');
+          if (latest.youtube.connected) {
+            clearInterval(poll);
+            showToast(`YouTube connected: ${latest.youtube.channelTitle}`);
+            renderIntegrationsPanel();
+          }
+        } catch (_error) { /* keep polling */ }
+      }, 2000);
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+function integrationsEmptyHTML() {
+  return `
+    <div class="panel-heading"><h2>Integrations</h2></div>
+    <p>Setup isn't finished yet — agents can't write scripts, generate media, or upload until an AI provider and YouTube are connected.</p>
+    <button type="button" class="button primary" id="settings-start-wizard">Start setup wizard</button>
+  `;
+}
+
+function integrationsConfiguredHTML(status) {
+  const youtubeConnected = status.youtube.connected;
+  return `
+    <div class="panel-heading"><h2>Integrations</h2><button type="button" class="text-button" id="settings-run-wizard">Run guided setup</button></div>
+    <div class="integrations-grid">
+      <div class="integration-row">
+        <div class="integration-row-header"><span>AI provider</span>${status.aiProviderConfigured ? '<span class="status ok">Connected</span>' : '<span class="status">Not configured</span>'}</div>
+        <div class="form-grid two">
+          <label><span>Provider</span><select id="settings-ai-provider"></select></label>
+          <label><span>Model</span><select id="settings-ai-model"></select></label>
+        </div>
+        <label><span>API key</span><input id="settings-ai-key" type="password" autocomplete="off" placeholder="${status.aiProviderConfigured ? 'Leave blank to keep the current key' : 'Paste your API key'}"></label>
+        <div class="form-actions"><button type="button" class="button secondary" id="settings-ai-save">Save AI provider</button></div>
+      </div>
+      <div class="integration-row">
+        <div class="integration-row-header"><span>Video provider</span>${status.videoProviderConfigured && status.videoProviderConfigured !== 'slideshow' ? '<span class="status ok">Connected</span>' : '<span class="status">Local slideshow</span>'}</div>
+        <div class="form-grid two">
+          <label><span>Provider</span><select id="settings-video-provider"></select></label>
+        </div>
+        <div id="settings-video-key-row" class="form-grid two hidden">
+          <label><span id="settings-video-key-label">API key</span><input id="settings-video-key" type="password" autocomplete="off" placeholder="Leave blank to keep the current key"></label>
+          <label id="settings-video-secret-row" class="hidden"><span id="settings-video-secret-label">Secret</span><input id="settings-video-secret" type="password" autocomplete="off"></label>
+        </div>
+        <div class="form-actions"><button type="button" class="button secondary" id="settings-video-save">Save video provider</button></div>
+      </div>
+      <div class="integration-row">
+        <div class="integration-row-header"><span>YouTube channel</span>${youtubeConnected ? '<span class="status ok">Connected</span>' : '<span class="status">Not connected</span>'}</div>
+        ${youtubeConnected ? `<div class="callout">${status.youtube.channelThumbnail ? `<img src="${escapeHTML(status.youtube.channelThumbnail)}" alt="" style="width:28px;height:28px;border-radius:50%;vertical-align:middle;margin-right:8px;">` : ''}Connected: <strong>${escapeHTML(status.youtube.channelTitle || 'Your channel')}</strong></div>` : ''}
+        ${status.youtube.hasClientCredentials ? '' : `
+        <div class="form-grid two">
+          <label><span>Client ID</span><input id="settings-yt-client-id" autocomplete="off" placeholder="xxxx.apps.googleusercontent.com"></label>
+          <label><span>Client secret</span><input id="settings-yt-client-secret" type="password" autocomplete="off"></label>
+        </div>`}
+        <div class="form-actions"><button type="button" class="button secondary" id="settings-youtube-connect">${youtubeConnected ? 'Change channel' : 'Connect YouTube'}</button></div>
+        <p id="settings-youtube-status" class="callout hidden"></p>
+      </div>
+    </div>
+  `;
+}
 
 const initialView = location.hash.slice(1);
 if (['overview', 'operator', 'pipeline', 'calendar', 'analytics', 'readiness', 'settings'].includes(initialView)) switchView(initialView);

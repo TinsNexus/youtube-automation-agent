@@ -1107,11 +1107,12 @@ class YouTubeAutomationAgent {
       const { checkFFmpeg } = require('./utils/ffmpeg');
 
       let aiProviderConfigured = null;
-      if (creds.openai?.apiKey) aiProviderConfigured = 'openai';
-      else if (creds.gemini?.apiKey) aiProviderConfigured = 'gemini';
-      else if (creds.aiProvider?.apiKey) aiProviderConfigured = creds.aiProvider.provider;
+      let aiModelConfigured = null;
+      if (creds.openai?.apiKey) { aiProviderConfigured = 'openai'; aiModelConfigured = creds.openai.model; }
+      else if (creds.gemini?.apiKey) { aiProviderConfigured = 'gemini'; aiModelConfigured = creds.gemini.model; }
+      else if (creds.aiProvider?.apiKey) { aiProviderConfigured = creds.aiProvider.provider; aiModelConfigured = creds.aiProvider.model; }
 
-      const youtube = { connected: false, channelTitle: null, channelThumbnail: null };
+      const youtube = { connected: false, channelTitle: null, channelThumbnail: null, hasClientCredentials: Boolean(creds.youtube?.client_id) };
       if (creds.youtube && tokens.youtube) {
         try {
           const youtubeClient = this.credentials.getYouTubeClient();
@@ -1128,6 +1129,7 @@ class YouTubeAutomationAgent {
       res.json({
         setupRequired: this.setupRequired,
         aiProviderConfigured,
+        aiModelConfigured,
         videoProviderConfigured: await this.db.getSetting('video_provider'),
         youtube,
         ffmpegAvailable: await checkFFmpeg()
@@ -1147,9 +1149,19 @@ class YouTubeAutomationAgent {
 
     this.app.post('/api/setup/ai-provider', protect, async (req, res) => {
       try {
-        const { providerId, apiKey, model } = req.body || {};
+        const { providerId, apiKey: rawApiKey, model } = req.body || {};
         const guide = AI_PROVIDER_GUIDE[providerId];
-        if (!guide || !apiKey) return res.status(400).json({ success: false, error: 'providerId and apiKey are required' });
+        if (!guide) return res.status(400).json({ success: false, error: 'Unknown provider' });
+
+        // Editing an already-configured provider (e.g. just switching model)
+        // shouldn't force re-pasting the key — reuse the one on file for that
+        // exact provider when the request omits it.
+        const creds = this.credentials.credentials;
+        const existingKey = providerId === 'openai' ? creds.openai?.apiKey
+          : providerId === 'gemini' ? creds.gemini?.apiKey
+          : creds.aiProvider?.provider === providerId ? creds.aiProvider?.apiKey : null;
+        const apiKey = rawApiKey || existingKey;
+        if (!apiKey) return res.status(400).json({ success: false, error: 'An API key is required' });
 
         const validation = await this.validateAIKeyWithSerializationGuard(guide, apiKey, model);
         if (!validation.ok) return res.status(400).json({ success: false, error: validation.error });
@@ -1164,13 +1176,26 @@ class YouTubeAutomationAgent {
 
     this.app.post('/api/setup/video-provider', protect, async (req, res) => {
       try {
-        const { providerId, apiKey, secret } = req.body || {};
+        const { providerId, apiKey: rawApiKey, secret: rawSecret } = req.body || {};
         if (providerId === 'slideshow' || !providerId) {
           await this.db.setSetting('video_provider', 'slideshow');
           return res.json({ success: true });
         }
         const guide = VIDEO_PROVIDER_GUIDE[providerId];
         if (!guide) return res.status(400).json({ success: false, error: 'Unknown video provider' });
+
+        // Re-saving an already-configured video provider (e.g. re-selecting it
+        // after switching away) shouldn't force re-pasting its key/secret.
+        const creds = this.credentials.credentials;
+        const existing = {
+          seedance: creds.replicate,
+          minimax_h3: creds.minimax,
+          google_omni: creds.gemini,
+          kling: creds.kling,
+          wan: creds.wan
+        }[providerId];
+        const apiKey = rawApiKey || existing?.apiKey || existing?.accessKey;
+        const secret = rawSecret || existing?.secretKey;
         if (!apiKey) return res.status(400).json({ success: false, error: `${guide.credentialName || 'An API key'} is required` });
 
         guide.save(this.credentials.credentials, apiKey, secret);
