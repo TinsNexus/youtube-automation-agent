@@ -42,7 +42,11 @@ module.exports = [
         setTimeout: 'readonly',
         URL: 'readonly',
         window: 'readonly',
-        document: 'readonly'
+        document: 'readonly',
+        t: 'readonly',
+        getLanguage: 'readonly',
+        setLanguage: 'readonly',
+        applyTranslations: 'readonly'
       }
     },
     rules: {

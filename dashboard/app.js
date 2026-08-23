@@ -23,7 +23,7 @@ function apiKey() {
 }
 
 function requestApiKey() {
-  const key = prompt('Enter the API_KEY value from your .env. It stays in this browser only.', apiKey());
+  const key = prompt(t('settings.api_key_prompt'), apiKey());
   if (key !== null) localStorage.setItem('yaa_api_key', key.trim());
   return key;
 }
@@ -61,10 +61,10 @@ function empty(message) {
 }
 
 function formatDate(value, includeTime = true) {
-  if (!value) return 'Not scheduled';
+  if (!value) return t('common.not_scheduled');
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Not scheduled';
-  return new Intl.DateTimeFormat(undefined, {
+  if (Number.isNaN(date.getTime())) return t('common.not_scheduled');
+  return new Intl.DateTimeFormat(getLanguage() === 'vi' ? 'vi-VN' : 'en-US', {
     month: 'short', day: 'numeric',
     ...(ui.state?.profile?.timezone ? { timeZone: ui.state.profile.timezone } : {}),
     ...(includeTime ? { hour: 'numeric', minute: '2-digit' } : {})
@@ -74,10 +74,10 @@ function formatDate(value, includeTime = true) {
 function timeAgo(value) {
   if (!value) return '';
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  return `${Math.floor(seconds / 86400)}d ago`;
+  if (seconds < 60) return t('common.just_now');
+  if (seconds < 3600) return t('common.minutes_ago', { n: Math.floor(seconds / 60) });
+  if (seconds < 86400) return t('common.hours_ago', { n: Math.floor(seconds / 3600) });
+  return t('common.days_ago', { n: Math.floor(seconds / 86400) });
 }
 
 function label(value) {
@@ -97,7 +97,7 @@ async function refreshDashboard(silent = false) {
     ui.state = await api('/api/dashboard');
     renderDashboard();
   } catch (error) {
-    $('#system-label').textContent = 'Dashboard unavailable';
+    $('#system-label').textContent = t('system.dashboard_unavailable');
     $('#system-dot').classList.remove('online');
     if (!silent) showToast(error.message, 'error');
   } finally {
@@ -112,13 +112,13 @@ function renderDashboard() {
   const scheduled = state.schedule.filter(item => item.status === 'scheduled');
   const actionableJobs = state.jobs.filter(job => ['queued', 'running', 'failed', 'interrupted'].includes(job.status));
 
-  $('#brand-name').textContent = state.profile?.channel_name || 'Automation Studio';
+  $('#brand-name').textContent = state.profile?.channel_name || t('nav.brand_name');
   $('#setup-banner').classList.toggle('hidden', !state.system.setupRequired);
   $('#system-label').textContent = state.system.setupRequired
-    ? 'Setup required'
-    : state.system.automationPaused ? 'Automation paused' : `${state.system.agents.length} agents online`;
+    ? t('system.setup_required')
+    : state.system.automationPaused ? t('system.automation_paused') : t('system.agents_online', { n: state.system.agents.length });
   $('#system-dot').classList.toggle('online', state.system.initialized && !state.system.automationPaused && !state.system.setupRequired);
-  $('#automation-toggle').textContent = state.system.automationPaused ? 'Resume automation' : 'Pause automation';
+  $('#automation-toggle').textContent = state.system.automationPaused ? t('common.resume_automation') : t('common.pause_automation');
   $('#automation-toggle').disabled = state.system.setupRequired;
   $('#generate-button').disabled = state.system.setupRequired;
   $('#review-badge').textContent = reviews.length;
@@ -152,47 +152,47 @@ function renderReadiness(readiness = {}) {
   statusNode.textContent = readiness.stale && status !== 'unverified' ? `${label(status)} · stale` : label(status);
 
   const titles = {
-    passed: 'The production path is verified.',
-    warning: 'Core checks passed with warnings.',
-    failed: 'Automation is blocked until this is fixed.',
-    unverified: 'Prove the pipeline, without uploading.'
+    passed: t('readiness.title_passed'),
+    warning: t('readiness.title_warning'),
+    failed: t('readiness.title_failed'),
+    unverified: t('readiness.hero_title')
   };
   $('#readiness-title').textContent = titles[status] || titles.unverified;
   const counts = readiness.summary || {};
   $('#readiness-summary').textContent = status === 'unverified'
-    ? 'The check makes small live text and narration requests, verifies channel access, builds a local audio/video MP4, and validates queued metadata. It never creates or uploads a YouTube video.'
-    : `${counts.passed || 0} passed, ${counts.warnings || 0} warning${counts.warnings === 1 ? '' : 's'}, and ${counts.failed || 0} failed.`;
+    ? t('readiness.hero_summary')
+    : t('readiness.summary_result', { passed: counts.passed || 0, warnings: counts.warnings || 0, failed: counts.failed || 0 });
   $('#readiness-meta').textContent = readiness.completed_at
-    ? `Last run ${formatDate(readiness.completed_at)}${readiness.stale ? ' · older than 24 hours' : ''}`
-    : 'No readiness run recorded.';
+    ? t('readiness.last_run', { date: formatDate(readiness.completed_at) }) + (readiness.stale ? t('readiness.stale_suffix') : '')
+    : t('readiness.no_run_recorded');
 
   const checks = Array.isArray(readiness.checks) ? readiness.checks : [];
   $('#readiness-checks').innerHTML = checks.length ? checks.map(check => `
     <article class="readiness-check ${escapeHTML(check.status)}">
-      <div class="readiness-check-heading"><span class="readiness-icon" aria-hidden="true">${check.status === 'passed' ? '✓' : check.status === 'failed' ? '×' : '!'}</span><div><strong>${escapeHTML(check.label)}</strong><div class="meta-line">${escapeHTML(label(check.status))}${check.blocking ? ' · blocking' : ' · optional'} · ${(check.durationMs || 0) / 1000}s</div></div></div>
+      <div class="readiness-check-heading"><span class="readiness-icon" aria-hidden="true">${check.status === 'passed' ? '✓' : check.status === 'failed' ? '×' : '!'}</span><div><strong>${escapeHTML(check.label)}</strong><div class="meta-line">${escapeHTML(label(check.status))}${check.blocking ? t('readiness.blocking_suffix') : t('readiness.optional_suffix')} · ${(check.durationMs || 0) / 1000}s</div></div></div>
       <p>${escapeHTML(check.message)}</p>
-      ${check.remediation ? `<small><strong>Next:</strong> ${escapeHTML(check.remediation)}</small>` : ''}
-    </article>`).join('') : empty('Run the verified check to inspect every production dependency.');
+      ${check.remediation ? `<small><strong>${escapeHTML(t('readiness.remediation_prefix'))}</strong> ${escapeHTML(check.remediation)}</small>` : ''}
+    </article>`).join('') : empty(t('readiness.no_checks'));
 }
 
 function renderReviews(reviews) {
   const container = $('#review-list');
   if (!reviews.length) {
-    container.innerHTML = empty('Nothing is waiting. New content will appear here after quality review.');
+    container.innerHTML = empty(t('overview.no_review'));
     return;
   }
   container.innerHTML = reviews.slice(0, 5).map(item => `
     <article class="review-card">
       ${item.hasThumbnail ? `<img class="review-thumb" src="/api/content/${encodeURIComponent(item.id)}/asset/thumbnail" alt="">` : '<div class="review-thumb"></div>'}
-      <div class="review-meta"><strong>${escapeHTML(item.title)}</strong><div class="meta-line">${statusChip(item.review_status)} · Quality ${qualityScore(item.qualityChecks)}%</div></div>
-      <button class="button secondary small" data-open-content="${escapeHTML(item.id)}">Review</button>
+      <div class="review-meta"><strong>${escapeHTML(item.title)}</strong><div class="meta-line">${statusChip(item.review_status)} · ${escapeHTML(t('pipeline.quality_label'))} ${qualityScore(item.qualityChecks)}%</div></div>
+      <button class="button secondary small" data-open-content="${escapeHTML(item.id)}">${escapeHTML(t('overview.review_button'))}</button>
     </article>`).join('');
 }
 
 function renderJobs(jobs) {
   const container = $('#job-list');
   if (!jobs.length) {
-    container.innerHTML = empty('No generation runs yet.');
+    container.innerHTML = empty(t('overview.no_jobs'));
     return;
   }
   const stages = ['strategy', 'script', 'thumbnail', 'seo', 'production', 'quality_review'];
@@ -207,14 +207,14 @@ function renderJobs(jobs) {
     return `
     <article class="job-card">
       <div class="job-meta">
-        <strong>${escapeHTML(job.title || job.topic || 'Agent-selected topic')}</strong>
+        <strong>${escapeHTML(job.title || job.topic || t('overview.no_topic_job'))}</strong>
         <div class="meta-line">${statusChip(job.status)} · ${escapeHTML(label(job.stage))} · ${timeAgo(job.updated_at)}</div>
-        ${checkpoints.length ? `<div class="checkpoint-line">${completed.size}/${stages.length} stages saved${job.details?.reusedStages?.length ? ` · ${job.details.reusedStages.length} reused` : ''}</div>` : ''}
-        ${mediaTasks.length ? `<div class="checkpoint-line">Video: ${mediaCompleted}/${mediaTasks.length} clips ready · ${escapeHTML(mediaProviders)}</div>` : ''}
+        ${checkpoints.length ? `<div class="checkpoint-line">${t('overview.stages_saved', { n: completed.size, total: stages.length })}${job.details?.reusedStages?.length ? ` · ${t('overview.stages_reused', { n: job.details.reusedStages.length })}` : ''}</div>` : ''}
+        ${mediaTasks.length ? `<div class="checkpoint-line">${t('overview.video_clips_ready', { n: mediaCompleted, total: mediaTasks.length })} · ${escapeHTML(mediaProviders)}</div>` : ''}
         <div class="progress"><i style="width:${Math.max(0, Math.min(100, job.progress || 0))}%"></i></div>
       </div>
-      ${['queued', 'running'].includes(job.status) ? `<button class="text-button" data-cancel-job="${escapeHTML(job.id)}">Cancel</button>` : ''}
-      ${recoverable ? `<div class="job-recovery"><select data-resume-stage-for="${escapeHTML(job.id)}" aria-label="Stage to resume from">${stages.map(stage => `<option value="${stage}" ${stage === resumeFrom ? 'selected' : ''}>${escapeHTML(label(stage))}</option>`).join('')}</select><button class="button secondary small" data-resume-job="${escapeHTML(job.id)}">Resume</button></div>` : ''}
+      ${['queued', 'running'].includes(job.status) ? `<button class="text-button" data-cancel-job="${escapeHTML(job.id)}">${escapeHTML(t('overview.cancel_button'))}</button>` : ''}
+      ${recoverable ? `<div class="job-recovery"><select data-resume-stage-for="${escapeHTML(job.id)}" aria-label="${escapeHTML(t('overview.resume_stage_aria'))}">${stages.map(stage => `<option value="${stage}" ${stage === resumeFrom ? 'selected' : ''}>${escapeHTML(label(stage))}</option>`).join('')}</select><button class="button secondary small" data-resume-job="${escapeHTML(job.id)}">${escapeHTML(t('overview.resume_button'))}</button></div>` : ''}
     </article>`;
   }).join('');
 }
@@ -222,14 +222,14 @@ function renderJobs(jobs) {
 function renderSchedule(schedule, selector) {
   const container = $(selector);
   if (!schedule.length) {
-    container.innerHTML = empty('No approved videos are scheduled.');
+    container.innerHTML = empty(t('overview.no_schedule'));
     return;
   }
   container.innerHTML = schedule.map(item => `
     <div class="timeline-item">
-      <div class="date-chip"><small>${escapeHTML(new Date(item.publish_time).toLocaleDateString(undefined, { month: 'short' }))}</small><strong>${escapeHTML(new Date(item.publish_time).getDate())}</strong></div>
+      <div class="date-chip"><small>${escapeHTML(new Date(item.publish_time).toLocaleDateString(getLanguage() === 'vi' ? 'vi-VN' : 'en-US', { month: 'short' }))}</small><strong>${escapeHTML(new Date(item.publish_time).getDate())}</strong></div>
       <div class="timeline-meta"><strong>${escapeHTML(item.title)}</strong><div class="meta-line">${formatDate(item.publish_time)} · ${statusChip(item.status)}</div></div>
-      <button class="text-button" data-open-content="${escapeHTML(item.production_id)}">View</button>
+      <button class="text-button" data-open-content="${escapeHTML(item.production_id)}">${escapeHTML(t('overview.view_button'))}</button>
     </div>`).join('');
 }
 
@@ -239,7 +239,7 @@ function renderNotifications(notifications, events) {
     : events.map(event => ({ level: event.status === 'error' ? 'error' : 'info', title: label(event.event_type), message: event.data?.error || label(event.status), created_at: event.created_at }));
   const container = $('#notification-list');
   if (!items.length) {
-    container.innerHTML = empty('No activity has been recorded yet.');
+    container.innerHTML = empty(t('overview.no_activity'));
     return;
   }
   container.innerHTML = items.slice(0, 7).map(item => `
@@ -257,16 +257,16 @@ function renderPipeline(items) {
   );
   const container = $('#pipeline-list');
   if (!filtered.length) {
-    container.innerHTML = empty('No content matches this view.');
+    container.innerHTML = empty(t('pipeline.no_match'));
     return;
   }
   container.innerHTML = filtered.map(item => {
     const state = item.schedule_status || item.review_status || item.status;
     const next = nextAction(item);
     return `<article class="pipeline-item" data-open-content="${escapeHTML(item.id)}">
-      <div class="pipeline-title"><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(item.topic || 'No topic recorded')} · ${formatDate(item.created_at)}</span></div>
-      <div class="pipeline-col"><span>State</span><strong>${statusChip(state)}</strong></div>
-      <div class="pipeline-col"><span>Quality</span><strong>${qualityScore(item.qualityChecks)} / 100</strong></div>
+      <div class="pipeline-title"><strong>${escapeHTML(item.title)}</strong><span>${escapeHTML(item.topic || t('pipeline.no_topic'))} · ${formatDate(item.created_at)}</span></div>
+      <div class="pipeline-col"><span>${escapeHTML(t('pipeline.state_label'))}</span><strong>${statusChip(state)}</strong></div>
+      <div class="pipeline-col"><span>${escapeHTML(t('pipeline.quality_label'))}</span><strong>${qualityScore(item.qualityChecks)} / 100</strong></div>
       <button class="button secondary small">${escapeHTML(next)} →</button>
     </article>`;
   }).join('');
@@ -278,11 +278,11 @@ function qualityScore(checks) {
 }
 
 function nextAction(item) {
-  if (item.schedule_status === 'published') return 'View';
-  if (item.review_status === 'needs_attention') return 'Fix issues';
-  if (item.review_status === 'needs_review') return 'Review';
-  if (item.schedule_status === 'scheduled') return 'Scheduled';
-  return 'Inspect';
+  if (item.schedule_status === 'published') return t('pipeline.next_view');
+  if (item.review_status === 'needs_attention') return t('pipeline.next_fix_issues');
+  if (item.review_status === 'needs_review') return t('pipeline.next_review');
+  if (item.schedule_status === 'scheduled') return t('pipeline.next_scheduled');
+  return t('pipeline.next_inspect');
 }
 
 function renderCalendar(schedule) {
@@ -292,13 +292,13 @@ function renderCalendar(schedule) {
 function renderIdeas(ideas) {
   const container = $('#idea-list');
   if (!ideas.length) {
-    container.innerHTML = empty('Add promising topics here before spending generation credits.');
+    container.innerHTML = empty(t('calendar.no_ideas'));
     return;
   }
   container.innerHTML = ideas.map(idea => `
     <article class="idea-card">
-      <div class="idea-meta"><strong>${escapeHTML(idea.topic)}</strong><div class="meta-line">${escapeHTML(idea.angle || idea.rationale || 'No angle added')} · ${statusChip(idea.status)}</div></div>
-      ${idea.status === 'backlog' ? `<button class="button secondary small" data-generate-idea="${escapeHTML(idea.id)}">Generate</button>` : ''}
+      <div class="idea-meta"><strong>${escapeHTML(idea.topic)}</strong><div class="meta-line">${escapeHTML(idea.angle || idea.rationale || t('calendar.no_angle'))} · ${statusChip(idea.status)}</div></div>
+      ${idea.status === 'backlog' ? `<button class="button secondary small" data-generate-idea="${escapeHTML(idea.id)}">${escapeHTML(t('calendar.generate_button'))}</button>` : ''}
     </article>`).join('');
 }
 
@@ -309,19 +309,19 @@ function renderAnalytics(analytics, learning = {}) {
   const approved = (learning.recommendations || []).find(item => item.status === 'approved');
   const pending = (learning.recommendations || []).find(item => item.status === 'pending');
   $('#analytics-action').textContent = approved?.title || pending?.title || insights[0] || (analytics.totalVideos
-    ? 'Keep collecting results; recommendations get stronger with more published videos.'
-    : 'Publish and analyze the first video to unlock performance recommendations.');
+    ? t('analytics.keep_collecting')
+    : t('analytics.publish_first'));
   const performers = Array.isArray(analytics.topPerformers) ? analytics.topPerformers : [];
   $('#top-performers').innerHTML = performers.length ? performers.map(item => `
-    <article class="performer-card"><strong>${escapeHTML(item.videoDetails?.title || item.title || 'Untitled video')}</strong><div class="meta-line">Performance ${escapeHTML(item.performance?.score ?? item.performance_score ?? '—')} / 100</div></article>`).join('') : empty('No analyzed videos yet.');
+    <article class="performer-card"><strong>${escapeHTML(item.videoDetails?.title || item.title || t('analytics.untitled_video'))}</strong><div class="meta-line">${escapeHTML(t('analytics.performance_label', { score: item.performance?.score ?? item.performance_score ?? '—' }))}</div></article>`).join('') : empty(t('analytics.no_analyzed_videos'));
   renderLearning(learning);
   renderRetention(learning.retention || {});
 }
 
 function renderLearning(learning = {}) {
   const baseline = learning.baseline || {};
-  $('#learning-snapshot-count').textContent = `${learning.snapshotCount || 0} snapshots`;
-  $('#learning-approved-count').textContent = `${learning.approvedCount || 0} approved`;
+  $('#learning-snapshot-count').textContent = t('analytics.snapshots_count', { n: learning.snapshotCount || 0 });
+  $('#learning-approved-count').textContent = t('analytics.approved_count', { n: learning.approvedCount || 0 });
   const metrics = [
     ['CTR', baseline.ctr, '%'],
     ['Retention', baseline.retention, '%'],
@@ -329,20 +329,20 @@ function renderLearning(learning = {}) {
     ['Performance', baseline.performanceScore, '/100']
   ];
   $('#learning-baseline').innerHTML = learning.measuredVideos ? metrics.map(([name, value, suffix]) => `
-    <div><span>${escapeHTML(name)}</span><strong>${Number(value || 0).toFixed(1)}${escapeHTML(suffix)}</strong></div>`).join('') : empty('Two real measurements unlock evidence-backed recommendations.');
+    <div><span>${escapeHTML(name)}</span><strong>${Number(value || 0).toFixed(1)}${escapeHTML(suffix)}</strong></div>`).join('') : empty(t('analytics.two_measurements'));
 
   const recommendations = Array.isArray(learning.recommendations) ? learning.recommendations : [];
   $('#learning-recommendations').innerHTML = recommendations.length ? recommendations.map(item => `
     <article class="learning-card">
       <div class="learning-card-heading"><strong>${escapeHTML(item.title)}</strong>${statusChip(item.status)}</div>
       <p>${escapeHTML(item.rationale)}</p>
-      <div class="learning-meta"><span>${escapeHTML(label(item.category))} · ${escapeHTML(label(item.confidence))} confidence</span>
+      <div class="learning-meta"><span>${escapeHTML(label(item.category))} · ${escapeHTML(label(item.confidence))} ${escapeHTML(t('analytics.confidence_suffix'))}</span>
         <span class="learning-actions">
-          ${item.status !== 'approved' ? `<button class="text-button approve" data-learning-action="approve" data-learning-id="${escapeHTML(item.id)}">Approve</button>` : ''}
-          ${item.status !== 'rejected' ? `<button class="text-button" data-learning-action="reject" data-learning-id="${escapeHTML(item.id)}">Reject</button>` : ''}
+          ${item.status !== 'approved' ? `<button class="text-button approve" data-learning-action="approve" data-learning-id="${escapeHTML(item.id)}">${escapeHTML(t('analytics.approve_button'))}</button>` : ''}
+          ${item.status !== 'rejected' ? `<button class="text-button" data-learning-action="reject" data-learning-id="${escapeHTML(item.id)}">${escapeHTML(t('analytics.reject_button'))}</button>` : ''}
         </span>
       </div>
-    </article>`).join('') : empty('No recommendation yet. Lumen needs at least two real, sufficiently exposed measurements.');
+    </article>`).join('') : empty(t('analytics.no_recommendation'));
 }
 
 function renderRetention(retention = {}) {
@@ -351,11 +351,11 @@ function renderRetention(retention = {}) {
   const refresh = $('#refresh-retention-button');
   if (!snapshots.length) {
     ui.retentionSnapshotId = null;
-    select.innerHTML = '<option value="">No measured curves yet</option>';
+    select.innerHTML = `<option value="">${escapeHTML(t('analytics.no_curve_option'))}</option>`;
     select.disabled = true;
     refresh.disabled = true;
     $('#retention-meta').innerHTML = '';
-    $('#retention-chart').innerHTML = empty('Retention curves appear after a published video reaches a real analytics measurement window.');
+    $('#retention-chart').innerHTML = empty(t('analytics.no_curves'));
     $('#retention-scenes').innerHTML = '';
     return;
   }
@@ -370,29 +370,29 @@ function renderRetention(retention = {}) {
 
   const summary = snapshot.summary || {};
   $('#retention-meta').innerHTML = [
-    `${snapshot.points?.length || 0} real points`,
-    `${snapshot.sceneMetrics?.length || 0} scenes`,
-    `${summary.dropoffCount || 0} drop-offs`,
-    `${summary.rewatchCount || 0} rewatch signals`,
-    `${escapeHTML(label(snapshot.confidence))} confidence`,
-    `${escapeHTML(snapshot.measurementWindow)} window`
+    t('analytics.real_points', { n: snapshot.points?.length || 0 }),
+    t('analytics.scenes_count', { n: snapshot.sceneMetrics?.length || 0 }),
+    t('analytics.dropoffs', { n: summary.dropoffCount || 0 }),
+    t('analytics.rewatch_signals', { n: summary.rewatchCount || 0 }),
+    `${escapeHTML(label(snapshot.confidence))} ${escapeHTML(t('analytics.confidence_suffix'))}`,
+    `${escapeHTML(snapshot.measurementWindow)} ${escapeHTML(t('analytics.window_suffix'))}`
   ].map(item => `<span>${item}</span>`).join('');
   $('#retention-chart').innerHTML = retentionChart(snapshot);
   $('#retention-scenes').innerHTML = (snapshot.sceneMetrics || []).map(scene => `
     <article class="retention-scene ${escapeHTML(scene.signal)}">
-      <div class="retention-scene-heading"><div><span>Scene ${Number(scene.position || 0) + 1}</span><strong>${escapeHTML(scene.label)}</strong></div>${statusChip(scene.signal)}</div>
+      <div class="retention-scene-heading"><div><span>${escapeHTML(t('analytics.scene_label', { n: Number(scene.position || 0) + 1 }))}</span><strong>${escapeHTML(scene.label)}</strong></div>${statusChip(scene.signal)}</div>
       <div class="retention-metrics">
-        <div><span>Average watching</span><strong>${(Number(scene.averageWatchRatio || 0) * 100).toFixed(1)}%</strong></div>
-        <div><span>Scene change</span><strong>${Number(scene.changePoints || 0) > 0 ? '+' : ''}${Number(scene.changePoints || 0).toFixed(1)} pts</strong></div>
-        <div><span>Relative retention</span><strong>${(Number(scene.averageRelativeRetention || 0) * 100).toFixed(1)}%</strong></div>
-        <div><span>Sharpest drop</span><strong>${Number(scene.largestDropPoints || 0).toFixed(1)} pts</strong></div>
+        <div><span>${escapeHTML(t('analytics.average_watching'))}</span><strong>${(Number(scene.averageWatchRatio || 0) * 100).toFixed(1)}%</strong></div>
+        <div><span>${escapeHTML(t('analytics.scene_change'))}</span><strong>${Number(scene.changePoints || 0) > 0 ? '+' : ''}${Number(scene.changePoints || 0).toFixed(1)} pts</strong></div>
+        <div><span>${escapeHTML(t('analytics.relative_retention'))}</span><strong>${(Number(scene.averageRelativeRetention || 0) * 100).toFixed(1)}%</strong></div>
+        <div><span>${escapeHTML(t('analytics.sharpest_drop'))}</span><strong>${Number(scene.largestDropPoints || 0).toFixed(1)} pts</strong></div>
       </div>
-    </article>`).join('') || empty('The saved curve could not be mapped to a scene timeline.');
+    </article>`).join('') || empty(t('analytics.no_scene_mapping'));
 }
 
 function retentionChart(snapshot = {}) {
   const points = Array.isArray(snapshot.points) ? snapshot.points : [];
-  if (points.length < 2) return empty('This snapshot does not contain enough points for a curve.');
+  if (points.length < 2) return empty(t('analytics.not_enough_points'));
   const width = 1000;
   const height = 280;
   const left = 46;
@@ -416,12 +416,12 @@ function retentionChart(snapshot = {}) {
     return `<line x1="${left}" y1="${lineY.toFixed(1)}" x2="${width - right}" y2="${lineY.toFixed(1)}" class="retention-grid-line"/><text x="${left - 8}" y="${(lineY + 4).toFixed(1)}" text-anchor="end">${Math.round(value * 100)}%</text>`;
   }).join('');
   return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="retention-chart-title retention-chart-desc">
-    <title id="retention-chart-title">Audience retention for ${escapeHTML(snapshot.title || snapshot.videoId)}</title>
-    <desc id="retention-chart-desc">A ${points.length}-point audience retention curve divided by ${snapshot.sceneMetrics?.length || 0} production scenes.</desc>
+    <title id="retention-chart-title">${escapeHTML(t('analytics.retention_chart_title', { title: snapshot.title || snapshot.videoId }))}</title>
+    <desc id="retention-chart-desc">${escapeHTML(t('analytics.retention_chart_desc', { points: points.length, scenes: snapshot.sceneMetrics?.length || 0 }))}</desc>
     ${sceneBands}${grid}
     <polyline points="${line}" class="retention-line"/>
-    <text x="${left}" y="${height - 10}" text-anchor="start">Start</text>
-    <text x="${width - right}" y="${height - 10}" text-anchor="end">End</text>
+    <text x="${left}" y="${height - 10}" text-anchor="start">${escapeHTML(t('analytics.chart_start'))}</text>
+    <text x="${width - right}" y="${height - 10}" text-anchor="end">${escapeHTML(t('analytics.chart_end'))}</text>
   </svg>`;
 }
 
@@ -430,22 +430,22 @@ function renderActivation(activation = {}) {
   if (!container) return;
   const milestones = activation.milestones || {};
   const rows = [
-    ['Setup ready', milestones.setupReady],
-    ['First real MP4', milestones.firstRealVideo],
-    ['First approval', milestones.firstApproval],
-    ['First YouTube publish', milestones.firstPublish],
-    ['Second real MP4', milestones.secondRealVideo]
+    [t('analytics.milestone_setup_ready'), milestones.setupReady],
+    [t('analytics.milestone_first_video'), milestones.firstRealVideo],
+    [t('analytics.milestone_first_approval'), milestones.firstApproval],
+    [t('analytics.milestone_first_publish'), milestones.firstPublish],
+    [t('analytics.milestone_second_video'), milestones.secondRealVideo]
   ];
   container.innerHTML = rows.map(([name, milestone = {}]) => `
     <div class="timeline-item">
       <div class="timeline-dot ${milestone.achieved ? 'done' : ''}"></div>
-      <div><strong>${escapeHTML(name)}</strong><div class="meta-line">${milestone.achieved ? escapeHTML(formatDate(milestone.at)) : 'Not reached yet'}</div></div>
+      <div><strong>${escapeHTML(name)}</strong><div class="meta-line">${milestone.achieved ? escapeHTML(formatDate(milestone.at)) : escapeHTML(t('analytics.not_reached_yet'))}</div></div>
     </div>`).join('');
   if (milestones.firstRealVideo?.achieved) {
     container.insertAdjacentHTML('beforeend', `
       <div class="activation-share">
-        <span>Made something real with YouTube Automation Agent?</span>
-        <a class="button secondary small" href="https://github.com/darkzOGx/youtube-automation-agent/discussions/new?category=show-and-tell" target="_blank" rel="noreferrer">Share what you built</a>
+        <span>${escapeHTML(t('analytics.share_prompt'))}</span>
+        <a class="button secondary small" href="https://github.com/darkzOGx/youtube-automation-agent/discussions/new?category=show-and-tell" target="_blank" rel="noreferrer">${escapeHTML(t('analytics.share_button'))}</a>
       </div>`);
   }
 }
@@ -475,8 +475,8 @@ function renderOperator(strategy, runs, system) {
   const active = run && ['queued', 'running', 'cancelling'].includes(run.status);
   const recoverable = run && ['failed', 'interrupted', 'completed_with_issues'].includes(run.status);
   $('#activate-operator-button').disabled = Boolean(system.setupRequired || active || system.readiness?.status === 'failed');
-  $('#activate-operator-button').title = system.readiness?.status === 'failed' ? 'Resolve the production readiness failures first' : '';
-  $('#activate-operator-button').textContent = strategy?.status === 'active' ? 'Run strategy now' : 'Activate & run now';
+  $('#activate-operator-button').title = system.readiness?.status === 'failed' ? t('operator.readiness_blocked_title') : '';
+  $('#activate-operator-button').textContent = strategy?.status === 'active' ? t('operator.run_strategy_now') : t('operator.activate_run');
   $('#pause-operator-button').classList.toggle('hidden', strategy?.status !== 'active');
   $('#cancel-operator-run').classList.toggle('hidden', !active);
   if (active) $('#cancel-operator-run').dataset.runId = run.id;
@@ -485,20 +485,20 @@ function renderOperator(strategy, runs, system) {
   if (recoverable) $('#resume-operator-run').dataset.runId = run.id;
 
   if (!run) {
-    $('#operator-run-title').textContent = 'Waiting for a strategy';
-    $('#operator-run-summary').innerHTML = empty('Save a channel mandate, then activate it to research and produce the first plan.');
-    $('#operator-plan').innerHTML = empty('No editorial plan yet.');
+    $('#operator-run-title').textContent = t('operator.waiting_for_strategy');
+    $('#operator-run-summary').innerHTML = empty(t('operator.no_run_summary'));
+    $('#operator-plan').innerHTML = empty(t('operator.no_plan'));
     return;
   }
 
   $('#operator-run-title').textContent = `${label(run.stage)} · ${run.progress || 0}%`;
-  const sources = Array.isArray(run.research?.sources) ? run.research.sources.join(', ') : 'Research pending';
+  const sources = Array.isArray(run.research?.sources) ? run.research.sources.join(', ') : t('operator.research_pending');
   $('#operator-run-summary').innerHTML = `<div class="run-summary">
     <div class="progress"><i style="width:${Math.max(0, Math.min(100, run.progress || 0))}%"></i></div>
-    <div class="run-summary-row"><span>Status</span><strong>${statusChip(run.status)}</strong></div>
-    <div class="run-summary-row"><span>Research</span><strong>${escapeHTML(sources)}</strong></div>
-    <div class="run-summary-row"><span>Produced</span><strong>${escapeHTML(run.summary?.generated || 0)} / ${escapeHTML(run.summary?.planned || run.plan?.length || 0)}</strong></div>
-    <div class="run-summary-row"><span>Needs review</span><strong>${escapeHTML(run.summary?.needsReview || 0)}</strong></div>
+    <div class="run-summary-row"><span>${escapeHTML(t('operator.status_label'))}</span><strong>${statusChip(run.status)}</strong></div>
+    <div class="run-summary-row"><span>${escapeHTML(t('operator.research_label'))}</span><strong>${escapeHTML(sources)}</strong></div>
+    <div class="run-summary-row"><span>${escapeHTML(t('operator.produced_label'))}</span><strong>${escapeHTML(run.summary?.generated || 0)} / ${escapeHTML(run.summary?.planned || run.plan?.length || 0)}</strong></div>
+    <div class="run-summary-row"><span>${escapeHTML(t('operator.needs_review_label'))}</span><strong>${escapeHTML(run.summary?.needsReview || 0)}</strong></div>
     ${run.error ? `<p class="callout">${escapeHTML(run.error)}</p>` : ''}
   </div>`;
   const plan = Array.isArray(run.plan) ? run.plan : [];
@@ -509,7 +509,7 @@ function renderOperator(strategy, runs, system) {
       <strong>${escapeHTML(item.topic)}</strong>
       <p>${escapeHTML(item.angle || item.rationale)}</p>
     </article>`;
-  }).join('') : empty('Research and planning will appear here when the run begins.');
+  }).join('') : empty(t('operator.no_plan_yet'));
 }
 
 function populateSettings(profile = {}, settings = {}, providers = []) {
@@ -541,26 +541,26 @@ function populateSettings(profile = {}, settings = {}, providers = []) {
   }
   const selected = providers.find(provider => provider.id === videoMapping.videoProvider);
   $('#video-provider-status').textContent = videoMapping.videoProvider === 'auto'
-    ? `${providers.filter(provider => provider.available && provider.id !== 'slideshow').length} paid provider(s) available; local slideshow remains the final fallback.`
-    : videoMapping.videoProvider === 'slideshow' ? 'Local FFmpeg slideshow is selected; no external video credentials are required.'
-      : selected?.available ? `${label(selected.id)} is configured (${selected.model}).` : `${label(videoMapping.videoProvider)} credentials are not configured.`;
+    ? t('settings.video_provider_status_auto', { n: providers.filter(provider => provider.available && provider.id !== 'slideshow').length })
+    : videoMapping.videoProvider === 'slideshow' ? t('settings.video_provider_status_slideshow')
+      : selected?.available ? t('settings.video_provider_status_configured', { name: label(selected.id), model: selected.model }) : t('settings.video_provider_status_not_configured', { name: label(videoMapping.videoProvider) });
 }
 
 function switchView(view) {
   ui.currentView = view;
   $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.view === view));
   $$('.view').forEach(item => item.classList.toggle('active', item.id === `${view}-view`));
-  const titles = {
-    overview: ['OPERATOR OVERVIEW', 'Know what happens next.'],
-    operator: ['AUTONOMOUS OPERATOR', 'Give Lumen the strategy.'],
-    pipeline: ['CONTENT OPERATIONS', 'From idea to published.'],
-    calendar: ['EDITORIAL PLANNING', 'Plan before you generate.'],
-    analytics: ['PERFORMANCE', 'Turn results into the next move.'],
-    readiness: ['PRODUCTION READINESS', 'Verify before autonomy runs.'],
-    settings: ['CHANNEL GUARDRAILS', 'Make every agent sound like you.']
+  const titleKeys = {
+    overview: ['overview.eyebrow', 'overview.title'],
+    operator: ['operator.eyebrow', 'operator.title'],
+    pipeline: ['pipeline.eyebrow', 'pipeline.title'],
+    calendar: ['calendar.eyebrow', 'calendar.title'],
+    analytics: ['analytics.eyebrow', 'analytics.title'],
+    readiness: ['readiness.eyebrow', 'readiness.title'],
+    settings: ['settings.eyebrow', 'settings.title']
   };
-  $('#view-eyebrow').textContent = titles[view][0];
-  $('#view-title').textContent = titles[view][1];
+  $('#view-eyebrow').textContent = t(titleKeys[view][0]);
+  $('#view-title').textContent = t(titleKeys[view][1]);
   location.hash = view;
   if (view === 'settings') renderIntegrationsPanel();
 }
@@ -951,13 +951,13 @@ document.addEventListener('click', async event => {
   if (open) return openContent(open.dataset.openContent);
 
   const cancel = event.target.closest('[data-cancel-job]');
-  if (cancel && confirm('Cancel this generation job after its current stage?')) {
-    await mutate(`/api/jobs/${encodeURIComponent(cancel.dataset.cancelJob)}/cancel`, 'POST', {}, 'Cancellation requested.').catch(() => {});
+  if (cancel && confirm(t('confirm.cancel_job'))) {
+    await mutate(`/api/jobs/${encodeURIComponent(cancel.dataset.cancelJob)}/cancel`, 'POST', {}, t('confirm.cancellation_requested_toast')).catch(() => {});
   }
 
   const idea = event.target.closest('[data-generate-idea]');
   if (idea) {
-    await mutate(`/api/ideas/${encodeURIComponent(idea.dataset.generateIdea)}/generate`, 'POST', { length: 'medium' }, 'Idea queued for generation.').catch(() => {});
+    await mutate(`/api/ideas/${encodeURIComponent(idea.dataset.generateIdea)}/generate`, 'POST', { length: 'medium' }, t('dialog.idea_queued_toast')).catch(() => {});
   }
 
   const resume = event.target.closest('[data-resume-job]');
@@ -965,8 +965,8 @@ document.addEventListener('click', async event => {
     const jobId = resume.dataset.resumeJob;
     const select = $$('[data-resume-stage-for]').find(item => item.dataset.resumeStageFor === jobId);
     const stage = select?.value;
-    if (confirm(`Resume this job from ${label(stage)}? Later checkpoints will be regenerated.`)) {
-      await mutate(`/api/jobs/${encodeURIComponent(jobId)}/resume`, 'POST', { stage }, `Generation resumed from ${label(stage)}.`).catch(() => {});
+    if (confirm(t('confirm.resume_job', { stage: label(stage) }))) {
+      await mutate(`/api/jobs/${encodeURIComponent(jobId)}/resume`, 'POST', { stage }, t('confirm.resumed_from_toast', { stage: label(stage) })).catch(() => {});
     }
   }
 
@@ -975,8 +975,8 @@ document.addEventListener('click', async event => {
     const action = learning.dataset.learningAction;
     const id = learning.dataset.learningId;
     const message = action === 'approve'
-      ? 'Learning approved for future autonomous plans.'
-      : 'Learning rejected and excluded from future plans.';
+      ? t('analytics.learning_approved_toast')
+      : t('analytics.learning_rejected_toast');
     await mutate(`/api/learning/recommendations/${encodeURIComponent(id)}/${action}`, 'POST', {}, message).catch(() => {});
   }
 
@@ -988,7 +988,7 @@ document.addEventListener('click', async event => {
         method: 'POST',
         body: JSON.stringify({ measurementWindow: refreshRetention.dataset.measurementWindow || 'rolling' })
       });
-      showToast('Retention curve refreshed from YouTube Analytics.');
+      showToast(t('analytics.retention_refreshed_toast'));
       await refreshDashboard(true);
     } catch (error) {
       showToast(error.message, 'error');
@@ -1223,6 +1223,12 @@ document.addEventListener('change', event => {
   }
 });
 
+$('#language-select').value = getLanguage();
+$('#language-select').addEventListener('change', event => {
+  setLanguage(event.target.value);
+  location.reload();
+});
+
 $('#generate-button').addEventListener('click', () => $('#generate-dialog').showModal());
 $('#add-idea-button').addEventListener('click', () => $('#idea-dialog').showModal());
 $('#refresh-button').addEventListener('click', () => refreshDashboard());
@@ -1231,23 +1237,24 @@ $('#pipeline-filter').addEventListener('change', () => renderPipeline(ui.state?.
 $('#run-readiness-button').addEventListener('click', async event => {
   const button = event.currentTarget;
   button.disabled = true;
-  button.textContent = 'Running live checks…';
+  button.textContent = t('readiness.running_checks');
   try {
     await mutate('/api/readiness/run', 'POST', {
       includePaidMedia: $('#paid-image-probe').checked,
       includePaidVideo: $('#paid-video-probe').checked
-    }, 'Production readiness check completed.');
+    }, t('readiness.run_completed_toast'));
     switchView('readiness');
   } catch (_error) { /* toast already shown */ }
   finally {
     button.disabled = false;
-    button.textContent = 'Run verified check';
+    button.textContent = t('readiness.run_check');
   }
 });
 
 $('#automation-toggle').addEventListener('click', async () => {
   const action = ui.state?.system.automationPaused ? 'resume' : 'pause';
-  await mutate(`/api/automation/${action}`, 'POST', {}, `Automation ${action}d.`).catch(() => {});
+  const toastKey = action === 'resume' ? 'system.automation_resumed_toast' : 'system.automation_paused_toast';
+  await mutate(`/api/automation/${action}`, 'POST', {}, t(toastKey)).catch(() => {});
 });
 
 function strategyFormData(status = ui.state?.channelStrategy?.status || 'draft') {
@@ -1264,29 +1271,29 @@ function strategyFormData(status = ui.state?.channelStrategy?.status || 'draft')
 
 $('#strategy-form').addEventListener('submit', async event => {
   event.preventDefault();
-  await mutate('/api/operator/strategy', 'PUT', strategyFormData(), 'Channel strategy saved.').catch(() => {});
+  await mutate('/api/operator/strategy', 'PUT', strategyFormData(), t('operator.strategy_saved_toast')).catch(() => {});
 });
 
 $('#activate-operator-button').addEventListener('click', async () => {
   if (!$('#strategy-form').reportValidity()) return;
-  await mutate('/api/operator/start', 'POST', strategyFormData('active'), 'Autonomous operator started.').catch(() => {});
+  await mutate('/api/operator/start', 'POST', strategyFormData('active'), t('operator.started_toast')).catch(() => {});
 });
 
 $('#pause-operator-button').addEventListener('click', async () => {
-  await mutate('/api/operator/pause', 'POST', {}, 'Autonomous operator paused.').catch(() => {});
+  await mutate('/api/operator/pause', 'POST', {}, t('operator.paused_toast')).catch(() => {});
 });
 
 $('#cancel-operator-run').addEventListener('click', async event => {
   const runId = event.currentTarget.dataset.runId;
-  if (runId && confirm('Stop this autonomous run after the current agent stage?')) {
-    await mutate(`/api/operator/runs/${encodeURIComponent(runId)}/cancel`, 'POST', {}, 'Operator stop requested.').catch(() => {});
+  if (runId && confirm(t('operator.cancel_confirm'))) {
+    await mutate(`/api/operator/runs/${encodeURIComponent(runId)}/cancel`, 'POST', {}, t('operator.stop_requested_toast')).catch(() => {});
   }
 });
 
 $('#resume-operator-run').addEventListener('click', async event => {
   const runId = event.currentTarget.dataset.runId;
-  if (runId && confirm('Resume this operator run from its saved editorial plan and generation checkpoints?')) {
-    await mutate(`/api/operator/runs/${encodeURIComponent(runId)}/resume`, 'POST', {}, 'Autonomous operator resumed.').catch(() => {});
+  if (runId && confirm(t('operator.resume_confirm'))) {
+    await mutate(`/api/operator/runs/${encodeURIComponent(runId)}/resume`, 'POST', {}, t('operator.resumed_toast')).catch(() => {});
   }
 });
 
@@ -1294,7 +1301,7 @@ $('#generate-form').addEventListener('submit', async event => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(event.currentTarget));
   try {
-    await mutate('/generate', 'POST', { ...values, topic: values.topic.trim() || null }, 'Generation job started.');
+    await mutate('/generate', 'POST', { ...values, topic: values.topic.trim() || null }, t('dialog.generation_started_toast'));
     $('#generate-dialog').close();
     event.currentTarget.reset();
   } catch (_error) { /* toast already shown */ }
@@ -1304,7 +1311,7 @@ $('#idea-form').addEventListener('submit', async event => {
   event.preventDefault();
   const values = Object.fromEntries(new FormData(event.currentTarget));
   try {
-    await mutate('/api/ideas', 'POST', values, 'Idea added to the backlog.');
+    await mutate('/api/ideas', 'POST', values, t('dialog.idea_added_toast'));
     $('#idea-dialog').close();
     event.currentTarget.reset();
   } catch (_error) { /* toast already shown */ }
@@ -1315,7 +1322,7 @@ $('#profile-form').addEventListener('submit', async event => {
   const values = Object.fromEntries(new FormData(event.currentTarget));
   values.bannedTopics = values.bannedTopics.split(',').map(value => value.trim()).filter(Boolean);
   try {
-    await mutate('/api/profile', 'PUT', values, 'Channel setup saved.');
+    await mutate('/api/profile', 'PUT', values, t('settings.channel_setup_saved_toast'));
     await mutate('/api/settings', 'PUT', {
       approval_required: $('#approval-required').checked,
       notification_enabled: $('#notifications-enabled').checked,
@@ -1324,18 +1331,18 @@ $('#profile-form').addEventListener('submit', async event => {
       video_generation_mode: values.videoGenerationMode,
       video_clip_duration: Number(values.videoClipDuration),
       video_max_generated_seconds: Number(values.videoMaxGeneratedSeconds)
-    }, 'Operator settings saved.');
+    }, t('settings.operator_settings_saved_toast'));
   } catch (_error) { /* toast already shown */ }
 });
 
 $('#api-key-button').addEventListener('click', () => {
-  if (requestApiKey() !== null) showToast('Dashboard API key saved in this browser.');
+  if (requestApiKey() !== null) showToast(t('settings.dashboard_api_key_saved_toast'));
 });
 
 // Setup wizard — replaces `npm run credentials:setup` / `npm run walkthrough`
 // for people running the packaged app, which has no terminal.
 const WIZARD_STEPS = ['ai', 'video', 'youtube', 'summary'];
-const WIZARD_TITLES = { ai: 'AI provider', video: 'Video provider', youtube: 'Connect YouTube', summary: 'Ready to activate' };
+const WIZARD_TITLE_KEYS = { ai: 'wizard.ai_title', video: 'wizard.video_title', youtube: 'wizard.youtube_title', summary: 'wizard.summary_title' };
 let wizardProviders = null;
 let wizardYoutubePoll = null;
 
@@ -1343,8 +1350,8 @@ function wizardShowStep(step) {
   if (!WIZARD_STEPS.includes(step)) return;
   $$('.wizard-step').forEach(el => el.classList.remove('active'));
   $(`#wizard-step-${step}`).classList.add('active');
-  $('#wizard-step-label').textContent = `STEP ${WIZARD_STEPS.indexOf(step) + 1} OF ${WIZARD_STEPS.length}`;
-  $('#wizard-step-title').textContent = WIZARD_TITLES[step];
+  $('#wizard-step-label').textContent = t('wizard.step_label', { n: WIZARD_STEPS.indexOf(step) + 1, total: WIZARD_STEPS.length });
+  $('#wizard-step-title').textContent = t(WIZARD_TITLE_KEYS[step]);
   if (step !== 'youtube') clearInterval(wizardYoutubePoll);
   if (step === 'summary') wizardRenderSummary();
 }
@@ -1366,7 +1373,7 @@ function wizardUpdateAiModelOptions() {
   if (!guide) return;
   $('#wizard-ai-model').innerHTML = (guide.models || []).map(m => `<option value="${escapeHTML(m)}">${escapeHTML(m)}</option>`).join('');
   if (guide.defaultModel) $('#wizard-ai-model').value = guide.defaultModel;
-  $('#wizard-ai-instructions').innerHTML = `Get a key from <a href="${guide.keyUrl}" target="_blank" rel="noopener">${escapeHTML(guide.label)}</a> (${escapeHTML(guide.keyHint || '')}). Covers: ${escapeHTML(guide.covers || '')}`;
+  $('#wizard-ai-instructions').innerHTML = t('wizard.get_key_from_html', { url: escapeHTML(guide.keyUrl), label: escapeHTML(guide.label), hint: escapeHTML(guide.keyHint || ''), covers: escapeHTML(guide.covers || '') });
 }
 
 function wizardUpdateVideoFields() {
@@ -1375,14 +1382,14 @@ function wizardUpdateVideoFields() {
   const needsKey = providerId !== 'slideshow';
   $('#wizard-video-key-row').classList.toggle('hidden', !needsKey);
   if (needsKey && guide) {
-    $('#wizard-video-key-label').textContent = guide.credentialName || 'API key';
+    $('#wizard-video-key-label').textContent = guide.credentialName || t('wizard.api_key');
     $('#wizard-video-secret-row').classList.toggle('hidden', !guide.secretName);
     if (guide.secretName) $('#wizard-video-secret-label').textContent = guide.secretName;
   }
 }
 
 function wizardShowYoutubeConnected(youtube) {
-  const html = `${youtube.channelThumbnail ? `<img src="${escapeHTML(youtube.channelThumbnail)}" alt="" style="width:28px;height:28px;border-radius:50%;vertical-align:middle;margin-right:8px;">` : ''}Connected: <strong>${escapeHTML(youtube.channelTitle || 'Your channel')}</strong>`;
+  const html = `${youtube.channelThumbnail ? `<img src="${escapeHTML(youtube.channelThumbnail)}" alt="" style="width:28px;height:28px;border-radius:50%;vertical-align:middle;margin-right:8px;">` : ''}${escapeHTML(t('settings.connected_label'))} <strong>${escapeHTML(youtube.channelTitle || t('settings.your_channel'))}</strong>`;
   for (const id of ['#wizard-youtube-connected', '#wizard-summary-channel']) {
     const el = $(id);
     if (!el) continue;
@@ -1399,7 +1406,7 @@ function wizardPollYoutube() {
       if (status.youtube.connected) {
         clearInterval(wizardYoutubePoll);
         wizardShowYoutubeConnected(status.youtube);
-        showToast(`YouTube connected: ${status.youtube.channelTitle}`);
+        showToast(t('wizard.youtube_connected_toast', { channel: status.youtube.channelTitle }));
         setTimeout(() => wizardShowStep('summary'), 900);
       }
     } catch (_error) { /* keep polling — a transient network hiccup shouldn't stop it */ }
@@ -1409,11 +1416,11 @@ function wizardPollYoutube() {
 async function wizardRenderSummary() {
   const status = await api('/api/setup/status');
   const rows = [
-    { ok: Boolean(status.aiProviderConfigured), label: 'Write scripts & pick topics' },
-    { ok: Boolean(status.aiProviderConfigured), label: 'Generate images & voice narration' },
-    { ok: status.ffmpegAvailable, label: 'Assemble real .mp4 videos' },
-    { ok: Boolean(status.videoProviderConfigured) && status.videoProviderConfigured !== 'slideshow', label: 'Generate AI video clips (optional)' },
-    { ok: status.youtube.connected, label: 'Upload to YouTube' }
+    { ok: Boolean(status.aiProviderConfigured), label: t('wizard.cap_write_scripts') },
+    { ok: Boolean(status.aiProviderConfigured), label: t('wizard.cap_generate_media') },
+    { ok: status.ffmpegAvailable, label: t('wizard.cap_assemble_video') },
+    { ok: Boolean(status.videoProviderConfigured) && status.videoProviderConfigured !== 'slideshow', label: t('wizard.cap_video_clips') },
+    { ok: status.youtube.connected, label: t('wizard.cap_upload') }
   ];
   $('#wizard-capabilities').innerHTML = rows.map(row => `<div class="card">${row.ok ? '✓' : '✗'} ${escapeHTML(row.label)}</div>`).join('');
   if (status.youtube.connected) wizardShowYoutubeConnected(status.youtube);
@@ -1434,19 +1441,19 @@ $('#wizard-ai-test').addEventListener('click', async () => {
   const providerId = $('#wizard-ai-provider').value;
   const apiKey = $('#wizard-ai-key').value.trim();
   const model = $('#wizard-ai-model').value;
-  if (!apiKey) return showToast('Enter an API key first.', 'error');
+  if (!apiKey) return showToast(t('wizard.ai_key_required_toast'), 'error');
   const button = $('#wizard-ai-test');
   button.disabled = true;
-  button.textContent = 'Testing…';
+  button.textContent = t('wizard.testing');
   try {
     await api('/api/setup/ai-provider', { method: 'POST', body: JSON.stringify({ providerId, apiKey, model }) });
-    showToast('AI provider connected.');
+    showToast(t('wizard.ai_connected_toast'));
     wizardShowStep('video');
   } catch (error) {
     showToast(error.message, 'error');
   } finally {
     button.disabled = false;
-    button.textContent = 'Test & save';
+    button.textContent = t('wizard.test_save');
   }
 });
 
@@ -1455,10 +1462,10 @@ $('#wizard-video-next').addEventListener('click', async () => {
   if (providerId === 'slideshow') return wizardShowStep('youtube');
   const apiKey = $('#wizard-video-key').value.trim();
   const secret = $('#wizard-video-secret').value.trim();
-  if (!apiKey) return showToast('Enter the provider key, or switch back to Local slideshow.', 'error');
+  if (!apiKey) return showToast(t('wizard.video_key_required_toast'), 'error');
   try {
     await api('/api/setup/video-provider', { method: 'POST', body: JSON.stringify({ providerId, apiKey, secret: secret || undefined }) });
-    showToast('Video provider saved.');
+    showToast(t('wizard.video_saved_toast'));
     wizardShowStep('youtube');
   } catch (error) {
     showToast(error.message, 'error');
@@ -1468,14 +1475,14 @@ $('#wizard-video-next').addEventListener('click', async () => {
 $('#wizard-youtube-connect').addEventListener('click', async () => {
   const clientId = $('#wizard-yt-client-id').value.trim();
   const clientSecret = $('#wizard-yt-client-secret').value.trim();
-  if (!clientId || !clientSecret) return showToast('Enter both the Client ID and Client Secret.', 'error');
+  if (!clientId || !clientSecret) return showToast(t('wizard.client_credentials_required_toast'), 'error');
   const button = $('#wizard-youtube-connect');
   button.disabled = true;
   try {
     await api('/api/setup/youtube/credentials', { method: 'POST', body: JSON.stringify({ clientId, clientSecret }) });
     const { url } = await api('/api/setup/youtube/oauth-url');
     window.open(url, '_blank');
-    $('#wizard-youtube-status').textContent = 'Waiting for you to finish in the browser tab that just opened…';
+    $('#wizard-youtube-status').textContent = t('settings.waiting_browser');
     wizardPollYoutube();
   } catch (error) {
     showToast(error.message, 'error');
@@ -1487,17 +1494,17 @@ $('#wizard-youtube-connect').addEventListener('click', async () => {
 $('#wizard-activate').addEventListener('click', async () => {
   const button = $('#wizard-activate');
   button.disabled = true;
-  button.textContent = 'Activating…';
+  button.textContent = t('wizard.activating');
   try {
     await api('/api/setup/complete', { method: 'POST' });
-    showToast('Setup complete — automation is active.');
+    showToast(t('wizard.setup_complete_toast'));
     $('#setup-wizard-dialog').close();
     await refreshDashboard(true);
   } catch (error) {
     showToast(error.message, 'error');
   } finally {
     button.disabled = false;
-    button.textContent = 'Activate automation';
+    button.textContent = t('wizard.activate');
   }
 });
 
@@ -1536,11 +1543,11 @@ async function renderIntegrationsPanel() {
     const apiKey = $('#settings-ai-key').value.trim();
     const model = $('#settings-ai-model').value;
     if (!apiKey && providerId !== status.aiProviderConfigured) {
-      return showToast('Enter an API key for this provider.', 'error');
+      return showToast(t('settings.ai_key_required_toast'), 'error');
     }
     try {
       await api('/api/setup/ai-provider', { method: 'POST', body: JSON.stringify({ providerId, apiKey: apiKey || undefined, model }) });
-      showToast('AI provider saved.');
+      showToast(t('settings.ai_saved_toast'));
       renderIntegrationsPanel();
     } catch (error) {
       showToast(error.message, 'error');
@@ -1557,7 +1564,7 @@ async function renderIntegrationsPanel() {
     const needsKey = providerId !== 'slideshow';
     $('#settings-video-key-row').classList.toggle('hidden', !needsKey);
     if (needsKey) {
-      $('#settings-video-key-label').textContent = guide.credentialName || 'API key';
+      $('#settings-video-key-label').textContent = guide.credentialName || t('settings.api_key');
       $('#settings-video-secret-row').classList.toggle('hidden', !guide.secretName);
       if (guide.secretName) $('#settings-video-secret-label').textContent = guide.secretName;
     }
@@ -1570,11 +1577,11 @@ async function renderIntegrationsPanel() {
     const apiKey = $('#settings-video-key').value.trim();
     const secret = $('#settings-video-secret').value.trim();
     if (providerId !== 'slideshow' && !apiKey && providerId !== currentVideo) {
-      return showToast('Enter the provider key, or switch back to Local slideshow.', 'error');
+      return showToast(t('settings.video_key_required_toast'), 'error');
     }
     try {
       await api('/api/setup/video-provider', { method: 'POST', body: JSON.stringify({ providerId, apiKey: apiKey || undefined, secret: secret || undefined }) });
-      showToast('Video provider saved.');
+      showToast(t('settings.video_saved_toast'));
       renderIntegrationsPanel();
     } catch (error) {
       showToast(error.message, 'error');
@@ -1589,7 +1596,7 @@ async function renderIntegrationsPanel() {
         const clientId = $('#settings-yt-client-id').value.trim();
         const clientSecret = $('#settings-yt-client-secret').value.trim();
         if (!clientId || !clientSecret) {
-          showToast('Enter both the Client ID and Client Secret.', 'error');
+          showToast(t('settings.client_credentials_required_toast'), 'error');
           return;
         }
         await api('/api/setup/youtube/credentials', { method: 'POST', body: JSON.stringify({ clientId, clientSecret }) });
@@ -1598,13 +1605,13 @@ async function renderIntegrationsPanel() {
       window.open(url, '_blank');
       const statusEl = $('#settings-youtube-status');
       statusEl.classList.remove('hidden');
-      statusEl.textContent = 'Waiting for you to finish in the browser tab that just opened…';
+      statusEl.textContent = t('settings.waiting_browser');
       const poll = setInterval(async () => {
         try {
           const latest = await api('/api/setup/status');
           if (latest.youtube.connected) {
             clearInterval(poll);
-            showToast(`YouTube connected: ${latest.youtube.channelTitle}`);
+            showToast(t('settings.youtube_connected_toast', { channel: latest.youtube.channelTitle }));
             renderIntegrationsPanel();
           }
         } catch (_error) { /* keep polling */ }
@@ -1619,46 +1626,46 @@ async function renderIntegrationsPanel() {
 
 function integrationsEmptyHTML() {
   return `
-    <div class="panel-heading"><h2>Integrations</h2></div>
-    <p>Setup isn't finished yet — agents can't write scripts, generate media, or upload until an AI provider and YouTube are connected.</p>
-    <button type="button" class="button primary" id="settings-start-wizard">Start setup wizard</button>
+    <div class="panel-heading"><h2>${t('settings.integrations_title')}</h2></div>
+    <p>${t('settings.not_finished')}</p>
+    <button type="button" class="button primary" id="settings-start-wizard">${t('settings.start_wizard')}</button>
   `;
 }
 
 function integrationsConfiguredHTML(status) {
   const youtubeConnected = status.youtube.connected;
   return `
-    <div class="panel-heading"><h2>Integrations</h2><button type="button" class="text-button" id="settings-run-wizard">Run guided setup</button></div>
+    <div class="panel-heading"><h2>${t('settings.integrations_title')}</h2><button type="button" class="text-button" id="settings-run-wizard">${t('settings.run_guided_setup')}</button></div>
     <div class="integrations-grid">
       <div class="integration-row">
-        <div class="integration-row-header"><span>AI provider</span>${status.aiProviderConfigured ? '<span class="status ok">Connected</span>' : '<span class="status">Not configured</span>'}</div>
+        <div class="integration-row-header"><span>${t('settings.ai_provider')}</span>${status.aiProviderConfigured ? `<span class="status ok">${t('settings.connected')}</span>` : `<span class="status">${t('settings.not_configured')}</span>`}</div>
         <div class="form-grid two">
-          <label><span>Provider</span><select id="settings-ai-provider"></select></label>
-          <label><span>Model</span><select id="settings-ai-model"></select></label>
+          <label><span>${t('settings.provider')}</span><select id="settings-ai-provider"></select></label>
+          <label><span>${t('settings.model')}</span><select id="settings-ai-model"></select></label>
         </div>
-        <label><span>API key</span><input id="settings-ai-key" type="password" autocomplete="off" placeholder="${status.aiProviderConfigured ? 'Leave blank to keep the current key' : 'Paste your API key'}"></label>
-        <div class="form-actions"><button type="button" class="button secondary" id="settings-ai-save">Save AI provider</button></div>
+        <label><span>${t('settings.api_key')}</span><input id="settings-ai-key" type="password" autocomplete="off" placeholder="${status.aiProviderConfigured ? escapeHTML(t('settings.api_key_placeholder_existing')) : escapeHTML(t('settings.api_key_placeholder_new'))}"></label>
+        <div class="form-actions"><button type="button" class="button secondary" id="settings-ai-save">${t('settings.save_ai_provider')}</button></div>
       </div>
       <div class="integration-row">
-        <div class="integration-row-header"><span>Video provider</span>${status.videoProviderConfigured && status.videoProviderConfigured !== 'slideshow' ? '<span class="status ok">Connected</span>' : '<span class="status">Local slideshow</span>'}</div>
+        <div class="integration-row-header"><span>${t('settings.video_provider_row')}</span>${status.videoProviderConfigured && status.videoProviderConfigured !== 'slideshow' ? `<span class="status ok">${t('settings.connected')}</span>` : `<span class="status">${t('settings.local_slideshow')}</span>`}</div>
         <div class="form-grid two">
-          <label><span>Provider</span><select id="settings-video-provider"></select></label>
+          <label><span>${t('settings.provider')}</span><select id="settings-video-provider"></select></label>
         </div>
         <div id="settings-video-key-row" class="form-grid two hidden">
-          <label><span id="settings-video-key-label">API key</span><input id="settings-video-key" type="password" autocomplete="off" placeholder="Leave blank to keep the current key"></label>
-          <label id="settings-video-secret-row" class="hidden"><span id="settings-video-secret-label">Secret</span><input id="settings-video-secret" type="password" autocomplete="off"></label>
+          <label><span id="settings-video-key-label">${t('settings.api_key')}</span><input id="settings-video-key" type="password" autocomplete="off" placeholder="${escapeHTML(t('settings.api_key_placeholder_existing'))}"></label>
+          <label id="settings-video-secret-row" class="hidden"><span id="settings-video-secret-label">${t('settings.secret')}</span><input id="settings-video-secret" type="password" autocomplete="off"></label>
         </div>
-        <div class="form-actions"><button type="button" class="button secondary" id="settings-video-save">Save video provider</button></div>
+        <div class="form-actions"><button type="button" class="button secondary" id="settings-video-save">${t('settings.save_video_provider')}</button></div>
       </div>
       <div class="integration-row">
-        <div class="integration-row-header"><span>YouTube channel</span>${youtubeConnected ? '<span class="status ok">Connected</span>' : '<span class="status">Not connected</span>'}</div>
-        ${youtubeConnected ? `<div class="callout">${status.youtube.channelThumbnail ? `<img src="${escapeHTML(status.youtube.channelThumbnail)}" alt="" style="width:28px;height:28px;border-radius:50%;vertical-align:middle;margin-right:8px;">` : ''}Connected: <strong>${escapeHTML(status.youtube.channelTitle || 'Your channel')}</strong></div>` : ''}
+        <div class="integration-row-header"><span>${t('settings.youtube_channel')}</span>${youtubeConnected ? `<span class="status ok">${t('settings.connected')}</span>` : `<span class="status">${t('settings.not_connected')}</span>`}</div>
+        ${youtubeConnected ? `<div class="callout">${status.youtube.channelThumbnail ? `<img src="${escapeHTML(status.youtube.channelThumbnail)}" alt="" style="width:28px;height:28px;border-radius:50%;vertical-align:middle;margin-right:8px;">` : ''}${escapeHTML(t('settings.connected_label'))} <strong>${escapeHTML(status.youtube.channelTitle || t('settings.your_channel'))}</strong></div>` : ''}
         ${status.youtube.hasClientCredentials ? '' : `
         <div class="form-grid two">
-          <label><span>Client ID</span><input id="settings-yt-client-id" autocomplete="off" placeholder="xxxx.apps.googleusercontent.com"></label>
-          <label><span>Client secret</span><input id="settings-yt-client-secret" type="password" autocomplete="off"></label>
+          <label><span>${t('settings.client_id')}</span><input id="settings-yt-client-id" autocomplete="off" placeholder="xxxx.apps.googleusercontent.com"></label>
+          <label><span>${t('settings.client_secret')}</span><input id="settings-yt-client-secret" type="password" autocomplete="off"></label>
         </div>`}
-        <div class="form-actions"><button type="button" class="button secondary" id="settings-youtube-connect">${youtubeConnected ? 'Change channel' : 'Connect YouTube'}</button></div>
+        <div class="form-actions"><button type="button" class="button secondary" id="settings-youtube-connect">${youtubeConnected ? t('settings.change_channel') : t('settings.connect_youtube')}</button></div>
         <p id="settings-youtube-status" class="callout hidden"></p>
       </div>
     </div>
