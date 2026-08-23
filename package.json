@@ -1,15 +1,15 @@
 {
   "name": "youtube-automation-agent",
   "version": "2.8.0",
-  "description": "Lumen is an open-source AI agent that runs a YouTube channel end to end",
-  "main": "index.js",
+  "description": "AgentTube is an open-source AI agent that runs a YouTube channel end to end",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node index.js",
     "setup": "node setup.js",
     "walkthrough": "node walkthrough.js",
     "growth:snapshot": "node scripts/growth/snapshot-github.js",
     "scheduler": "node schedules/daily-automation.js",
-    "test": "node test.js",
+    "test": "sh -c 'YAA_DATA_DIR=$(mktemp -d) node test.js'",
     "agent:strategy": "node agents/content-strategy-agent.js",
     "agent:script": "node agents/script-writer-agent.js",
     "agent:thumbnail": "node agents/thumbnail-designer-agent.js",
@@ -18,12 +18,16 @@
     "agent:publishing": "node agents/publishing-scheduling-agent.js",
     "agent:analytics": "node agents/analytics-optimization-agent.js",
     "credentials:setup": "node utils/credential-manager.js setup",
+    "icons": "node scripts/generate-electron-icons.js",
+    "app": "electron .",
+    "dist": "electron-builder",
     "lint": "eslint ."
   },
   "dependencies": {
     "@google-cloud/local-auth": "^3.0.0",
     "@google/genai": "^2.9.0",
     "axios": "^1.7.0",
+    "better-sqlite3": "^13.0.3",
     "chalk": "^4.1.2",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
@@ -34,21 +38,52 @@
     "moment": "^2.29.4",
     "node-cron": "^3.0.2",
     "openai": "^6.0.0",
-    "playwright": "^1.54.2",
     "replicate": "^1.4.0",
-    "sqlite3": "^5.1.6",
-    "winston": "^3.11.0",
-    "sharp": "^0.33.0"
+    "sharp": "^0.33.0",
+    "winston": "^3.11.0"
   },
   "optionalDependencies": {
     "ffmpeg-static": "^5.2.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2",
+    "@eslint/js": "9.39.4",
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
     "eslint": "9.39.4",
-    "@eslint/js": "9.39.4"
+    "nodemon": "^3.0.2"
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "build": {
+    "appId": "com.tisorr.youtube-automation-agent",
+    "productName": "YouTube Automation Agent",
+    "files": [
+      "**/*",
+      "!reports/**",
+      "!examples/**",
+      "!assets/demo/**",
+      "!scripts/growth/**",
+      "!test.js",
+      "!walkthrough.js"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "node_modules/better-sqlite3/**",
+      "node_modules/sharp/**"
+    ],
+    "mac": {
+      "target": ["dmg"],
+      "category": "public.app-category.video",
+      "icon": "electron/assets/icon.icns"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "AudioVideo",
+      "icon": "electron/assets/icon.png"
+    },
+    "win": {
+      "target": ["nsis"]
+    }
   }
 }

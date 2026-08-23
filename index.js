@@ -18,6 +18,7 @@ const { OperatorService } = require('./utils/operator-service');
 const { AutonomousChannelOperator } = require('./utils/autonomous-channel-operator');
 const { ActivationMetrics } = require('./utils/activation-metrics');
 const { AnonymousTelemetry } = require('./utils/anonymous-telemetry');
+const paths = require('./utils/paths');
 const { ProductionReadinessService } = require('./utils/production-readiness-service');
 const { GenerationRecoveryService, GENERATION_STAGES } = require('./utils/generation-recovery-service');
 const { ProvenanceService } = require('./utils/provenance-service');
@@ -25,6 +26,9 @@ const { SceneRepairService } = require('./utils/scene-repair-service');
 const { ShortsRepurposingService } = require('./utils/shorts-repurposing-service');
 const { version } = require('./package.json');
 const chalk = require('chalk');
+const crypto = require('crypto');
+const { google } = require('googleapis');
+const { AI_PROVIDER_GUIDE, VIDEO_PROVIDER_GUIDE, SetupWalkthrough } = require('./walkthrough');
 
 class YouTubeAutomationAgent {
   constructor() {
@@ -92,6 +96,8 @@ class YouTubeAutomationAgent {
         return true;
       }
       
+      this.credentials.syncEnvVars();
+
       // Initialize agents
       this.logger.info('Initializing agents...');
       await this.initializeAgents();
@@ -129,6 +135,68 @@ class YouTubeAutomationAgent {
     } catch (error) {
       this.logger.error('Failed to initialize:', error);
       return false;
+    }
+  }
+
+  // Activates the pipeline after the in-app setup wizard finishes saving
+  // credentials, without restarting the server. Deliberately does NOT touch
+  // this.db or call setupAPI() again — both already ran once during the
+  // initial initialize(), whichever branch it took.
+  async completeSetup() {
+    if (!this.setupRequired) {
+      return { alreadyActive: true };
+    }
+    if (this._completingSetup) {
+      return this._completingSetup;
+    }
+
+    this._completingSetup = (async () => {
+      const credentialsValid = await this.credentials.validateAll();
+      if (!credentialsValid) {
+        const error = new Error('Setup is still incomplete — an AI provider and a connected YouTube channel are both required');
+        error.status = 409;
+        throw error;
+      }
+
+      this.credentials.syncEnvVars();
+      this.readiness = new ProductionReadinessService(this.db, this.credentials);
+
+      this.logger.info('Initializing agents...');
+      await this.initializeAgents();
+      this.scenes = this.agents.production?.sceneRepair || new SceneRepairService(
+        this.db,
+        this.agents.production?.aiVideoGenerator,
+        { logger: this.logger }
+      );
+      this.shorts = new ShortsRepurposingService(this.db, this.agents.publishing, { logger: this.logger });
+
+      const capabilities = await this.logCapabilitySummary();
+      if (capabilities.hasText && capabilities.hasFFmpeg && capabilities.hasUpload) {
+        await this.activation.markSetupReady(capabilities);
+      }
+
+      this.setupRequired = false;
+
+      if (!this.scheduler) {
+        this.logger.info('Setting up automation scheduler...');
+        this.scheduler = new DailyAutomation(this.agents, this.db, {
+          generateContent: input => this.queueScheduledContent(input)
+        });
+        await this.scheduler.initialize();
+      }
+
+      if (await this.db.getSetting('automation_paused') === 'true') {
+        await this.scheduler.pauseAutomation();
+      }
+
+      this.logger.success('Setup completed — automation pipeline activated');
+      return { alreadyActive: false, agents: Object.keys(this.agents), capabilities };
+    })();
+
+    try {
+      return await this._completingSetup;
+    } finally {
+      this._completingSetup = null;
     }
   }
 
@@ -414,6 +482,7 @@ class YouTubeAutomationAgent {
     });
 
     this.setupOperatorAPI();
+    this.setupSetupWizardAPI();
   }
 
   setupOperatorAPI() {
@@ -421,7 +490,7 @@ class YouTubeAutomationAgent {
 
     this.app.get('/api/dashboard', async (_req, res) => {
       try {
-        const [stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation, channelStrategy, operatorRuns, readiness] = await Promise.all([
+        const [stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation, channelStrategy, operatorRuns, readiness, quota] = await Promise.all([
           this.db.getStats(),
           this.db.listGenerationJobs(20),
           this.db.getPipelineOverview(50),
@@ -444,12 +513,15 @@ class YouTubeAutomationAgent {
           this.db.listOperatorRuns(10),
           this.readiness
             ? this.readiness.getSummary()
-            : Promise.resolve({ status: 'unverified', stale: false, blockingFailures: [], checks: [] })
+            : Promise.resolve({ status: 'unverified', stale: false, blockingFailures: [], checks: [] }),
+          this.agents.publishing
+            ? this.agents.publishing.getQuotaStatus()
+            : Promise.resolve({ used: 0, limit: 0, remaining: 0 })
         ]);
         if (this.telemetry) void this.telemetry.sync(activation);
         res.json({
           stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation,
-          channelStrategy, operatorRuns, readiness,
+          channelStrategy, operatorRuns, readiness, quota,
           system: {
             initialized: this.isInitialized,
             setupRequired: this.setupRequired,
@@ -771,8 +843,8 @@ class YouTubeAutomationAgent {
         const filePath = allowed[req.params.kind] || experimentPath;
         if (!filePath) return res.status(404).json({ error: 'Asset not found' });
         const resolved = path.resolve(filePath);
-        const dataRoot = path.resolve(__dirname, 'data');
-        const experimentRoot = path.resolve(__dirname, 'uploads', 'thumbnails');
+        const dataRoot = path.resolve(paths.dataDir);
+        const experimentRoot = path.resolve(paths.uploadsDir, 'thumbnails');
         const allowedPath = [dataRoot, experimentRoot]
           .some(root => resolved.startsWith(`${root}${path.sep}`));
         if (!allowedPath) return res.status(403).json({ error: 'Asset path is not allowed' });
@@ -1001,6 +1073,251 @@ class YouTubeAutomationAgent {
     });
   }
 
+  escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[ch]));
+  }
+
+  // Serializes AI key validation (SetupWalkthrough.validateAIKey temporarily
+  // mutates process.env's provider keys) so two concurrent wizard requests
+  // can't race on that shared, process-wide state.
+  async validateAIKeyWithSerializationGuard(guide, apiKey, model) {
+    if (this._setupValidationInFlight) {
+      return { ok: false, error: 'Another validation is already in progress — try again in a moment' };
+    }
+    this._setupValidationInFlight = true;
+    try {
+      const walkthrough = new SetupWalkthrough();
+      const ok = await walkthrough.validateAIKey(guide, apiKey, model);
+      return ok ? { ok: true } : { ok: false, error: 'That key did not work. Double-check it and try again.' };
+    } catch (error) {
+      return { ok: false, error: error.message };
+    } finally {
+      this._setupValidationInFlight = false;
+    }
+  }
+
+  setupSetupWizardAPI() {
+    const protect = this.requireAPIKey();
+
+    this.app.get('/api/setup/status', async (_req, res) => {
+      const creds = this.credentials.credentials || {};
+      const tokens = this.credentials.tokens || {};
+      const { checkFFmpeg } = require('./utils/ffmpeg');
+
+      let aiProviderConfigured = null;
+      let aiModelConfigured = null;
+      if (creds.openai?.apiKey) { aiProviderConfigured = 'openai'; aiModelConfigured = creds.openai.model; }
+      else if (creds.gemini?.apiKey) { aiProviderConfigured = 'gemini'; aiModelConfigured = creds.gemini.model; }
+      else if (creds.aiProvider?.apiKey) { aiProviderConfigured = creds.aiProvider.provider; aiModelConfigured = creds.aiProvider.model; }
+
+      const youtube = { connected: false, channelTitle: null, channelThumbnail: null, hasClientCredentials: Boolean(creds.youtube?.client_id) };
+      if (creds.youtube && tokens.youtube) {
+        try {
+          const youtubeClient = this.credentials.getYouTubeClient();
+          const response = await youtubeClient.channels.list({ part: 'snippet', mine: true });
+          const channel = response.data.items?.[0];
+          youtube.connected = true;
+          youtube.channelTitle = channel?.snippet?.title || null;
+          youtube.channelThumbnail = channel?.snippet?.thumbnails?.default?.url || null;
+        } catch (_error) {
+          youtube.connected = false;
+        }
+      }
+
+      res.json({
+        setupRequired: this.setupRequired,
+        aiProviderConfigured,
+        aiModelConfigured,
+        videoProviderConfigured: await this.db.getSetting('video_provider'),
+        youtube,
+        ffmpegAvailable: await checkFFmpeg()
+      });
+    });
+
+    this.app.get('/api/setup/providers', (_req, res) => {
+      const sanitize = guide => {
+        const { save: _save, validationCreds: _validationCreds, ...rest } = guide;
+        return rest;
+      };
+      res.json({
+        aiProviders: Object.fromEntries(Object.entries(AI_PROVIDER_GUIDE).map(([id, guide]) => [id, sanitize(guide)])),
+        videoProviders: Object.fromEntries(Object.entries(VIDEO_PROVIDER_GUIDE).map(([id, guide]) => [id, sanitize(guide)]))
+      });
+    });
+
+    this.app.post('/api/setup/ai-provider', protect, async (req, res) => {
+      try {
+        const { providerId, apiKey: rawApiKey, model } = req.body || {};
+        const guide = AI_PROVIDER_GUIDE[providerId];
+        if (!guide) return res.status(400).json({ success: false, error: 'Unknown provider' });
+
+        // Editing an already-configured provider (e.g. just switching model)
+        // shouldn't force re-pasting the key — reuse the one on file for that
+        // exact provider when the request omits it.
+        const creds = this.credentials.credentials;
+        const existingKey = providerId === 'openai' ? creds.openai?.apiKey
+          : providerId === 'gemini' ? creds.gemini?.apiKey
+          : creds.aiProvider?.provider === providerId ? creds.aiProvider?.apiKey : null;
+        const apiKey = rawApiKey || existingKey;
+        if (!apiKey) return res.status(400).json({ success: false, error: 'An API key is required' });
+
+        const validation = await this.validateAIKeyWithSerializationGuard(guide, apiKey, model);
+        if (!validation.ok) return res.status(400).json({ success: false, error: validation.error });
+
+        guide.save(this.credentials.credentials, apiKey, model);
+        await this.credentials.saveCredentials();
+        res.json({ success: true });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/setup/video-provider', protect, async (req, res) => {
+      try {
+        const { providerId, apiKey: rawApiKey, secret: rawSecret } = req.body || {};
+        if (providerId === 'slideshow' || !providerId) {
+          await this.db.setSetting('video_provider', 'slideshow');
+          return res.json({ success: true });
+        }
+        const guide = VIDEO_PROVIDER_GUIDE[providerId];
+        if (!guide) return res.status(400).json({ success: false, error: 'Unknown video provider' });
+
+        // Re-saving an already-configured video provider (e.g. re-selecting it
+        // after switching away) shouldn't force re-pasting its key/secret.
+        const creds = this.credentials.credentials;
+        const existing = {
+          seedance: creds.replicate,
+          minimax_h3: creds.minimax,
+          google_omni: creds.gemini,
+          kling: creds.kling,
+          wan: creds.wan
+        }[providerId];
+        const apiKey = rawApiKey || existing?.apiKey || existing?.accessKey;
+        const secret = rawSecret || existing?.secretKey;
+        if (!apiKey) return res.status(400).json({ success: false, error: `${guide.credentialName || 'An API key'} is required` });
+
+        guide.save(this.credentials.credentials, apiKey, secret);
+        await this.credentials.saveCredentials();
+        await this.db.setSetting('video_provider', providerId);
+        res.json({ success: true });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/setup/youtube/credentials', protect, async (req, res) => {
+      try {
+        const { clientId, clientSecret } = req.body || {};
+        if (!clientId || !clientSecret) {
+          return res.status(400).json({ success: false, error: 'clientId and clientSecret are required' });
+        }
+        const redirectUri = `${req.protocol}://${req.get('host')}/api/setup/youtube/callback`;
+        this.credentials.credentials.youtube = {
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uris: [redirectUri]
+        };
+        await this.credentials.saveCredentials();
+        res.json({ success: true, redirectUri });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get('/api/setup/youtube/oauth-url', protect, (_req, res) => {
+      try {
+        const creds = this.credentials.credentials.youtube;
+        if (!creds) return res.status(400).json({ success: false, error: 'Save YouTube client credentials first' });
+
+        const redirectUri = creds.redirect_uris[0];
+        const state = crypto.randomBytes(24).toString('hex');
+        this._oauthStates = this._oauthStates || new Map();
+        for (const [key, value] of this._oauthStates) {
+          if (Date.now() - value.timestamp > 600000) this._oauthStates.delete(key);
+        }
+        this._oauthStates.set(state, { timestamp: Date.now(), redirectUri });
+
+        const oauth2Client = new google.auth.OAuth2(creds.client_id, creds.client_secret, redirectUri);
+        const url = oauth2Client.generateAuthUrl({
+          access_type: 'offline',
+          scope: [
+            'https://www.googleapis.com/auth/youtube.upload',
+            'https://www.googleapis.com/auth/youtube',
+            'https://www.googleapis.com/auth/youtube.readonly',
+            'https://www.googleapis.com/auth/yt-analytics.readonly'
+          ],
+          prompt: 'consent',
+          state
+        });
+        res.json({ success: true, url });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get('/api/setup/youtube/callback', async (req, res) => {
+      const page = (title, message) =>
+        `<!doctype html><html><head><meta charset="utf-8"><title>${this.escapeHtml(title)}</title></head>` +
+        `<body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#111;color:#eee;">` +
+        `<div style="text-align:center;max-width:420px;"><h1>${this.escapeHtml(title)}</h1><p>${this.escapeHtml(message)}</p></div>` +
+        `</body></html>`;
+
+      try {
+        const { code, state, error } = req.query;
+        if (error) return res.status(400).type('html').send(page('Authorization declined', String(error)));
+
+        this._oauthStates = this._oauthStates || new Map();
+        const stateData = state && this._oauthStates.get(state);
+        if (!stateData) return res.status(400).type('html').send(page('Link expired', 'This authorization link is no longer valid. Close this window and start again from the setup wizard.'));
+        this._oauthStates.delete(state);
+
+        if (!code) return res.status(400).type('html').send(page('Missing code', 'Google did not return an authorization code. Close this window and try again.'));
+
+        const creds = this.credentials.credentials.youtube;
+        const oauth2Client = new google.auth.OAuth2(creds.client_id, creds.client_secret, stateData.redirectUri);
+        const { tokens } = await oauth2Client.getToken(code);
+        this.credentials.tokens.youtube = tokens;
+        await this.credentials.saveTokens();
+
+        return res.type('html').send(page('YouTube connected', 'You can close this window and return to the setup wizard.'));
+      } catch (error) {
+        return res.status(500).type('html').send(page('Connection failed', error.message));
+      }
+    });
+
+    this.app.post('/api/setup/test-connections', protect, async (req, res) => {
+      try {
+        const results = await this.credentials.testConnections();
+        const creds = this.credentials.credentials;
+        let guide = null, apiKey = null, model = null;
+        if (creds.openai?.apiKey) { guide = AI_PROVIDER_GUIDE.openai; apiKey = creds.openai.apiKey; model = creds.openai.model; }
+        else if (creds.gemini?.apiKey) { guide = AI_PROVIDER_GUIDE.gemini; apiKey = creds.gemini.apiKey; model = creds.gemini.model; }
+        else if (creds.aiProvider?.apiKey) { guide = AI_PROVIDER_GUIDE[creds.aiProvider.provider]; apiKey = creds.aiProvider.apiKey; model = creds.aiProvider.model; }
+
+        if (guide) {
+          const validation = await this.validateAIKeyWithSerializationGuard(guide, apiKey, model);
+          results.aiProvider = validation.ok;
+        } else {
+          results.aiProvider = false;
+        }
+        res.json({ success: true, results });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/setup/complete', protect, async (req, res) => {
+      try {
+        const result = await this.completeSetup();
+        res.json({ success: true, ...result });
+      } catch (error) {
+        res.status(error.status || 500).json({ success: false, error: error.message });
+      }
+    });
+  }
+
   async startGenerationJob(input = {}) {
     if (this.setupRequired || !this.agents.strategy) {
       const error = new Error('Finish setup with npm run walkthrough before generating content');
@@ -1179,7 +1496,11 @@ class YouTubeAutomationAgent {
 
   async generateContent(topic = null, style = null, length = 'medium', options = {}) {
     this.logger.info('Starting content generation pipeline...');
-    const { jobId = null, strategyContext = {} } = options;
+    const { jobId = null, strategyContext: rawStrategyContext } = options;
+    // A destructuring default only fires on `undefined` — manual generation
+    // requests explicitly carry `strategyContext: null`, which would otherwise
+    // reach the `.angle`/`.rationale` reads below and throw.
+    const strategyContext = rawStrategyContext || {};
     const profile = await this.db.getChannelProfile() || {};
     const lengthLabels = { short: '2-4 minutes', medium: '8-12 minutes', long: '15-20 minutes' };
 
@@ -1543,11 +1864,13 @@ class YouTubeAutomationAgent {
       throw error;
     }
 
-    await this.db.saveContentReview(bundle.id, {
-      status: 'approved', editorData, qualityChecks: quality.checks,
-      reviewNotes: input.reviewNotes || 'Approved by operator', reviewedAt: new Date().toISOString()
+    await this.db.transaction(async () => {
+      await this.db.saveContentReview(bundle.id, {
+        status: 'approved', editorData, qualityChecks: quality.checks,
+        reviewNotes: input.reviewNotes || 'Approved by operator', reviewedAt: new Date().toISOString()
+      });
+      await this.db.updateProductionStatus(bundle.id, 'scheduled');
     });
-    await this.db.updateProductionStatus(bundle.id, 'scheduled');
     await this.operator.notify({
       type: 'content_approved', level: 'success', title: 'Content approved',
       message: `${productionData.script.title} is scheduled for ${scheduleEntry.publishTime}`,
@@ -1556,39 +1879,67 @@ class YouTubeAutomationAgent {
     return { productionId, reviewStatus: 'approved', qualityScore: quality.score, schedule: scheduleEntry };
   }
 
-  async start() {
+  async start({ host = process.env.HOST || '127.0.0.1', port = process.env.PORT || 3456 } = {}) {
     const initialized = await this.initialize();
-    
+
     if (!initialized) {
-      console.log(chalk.red('\n❌ Failed to initialize. Please check your configuration.'));
-      process.exit(1);
+      throw new Error('Initialization failed — check your configuration');
     }
-    
-    const PORT = process.env.PORT || 3456;
-    this.app.listen(PORT, () => {
-      console.log(chalk.green(`\n✅ YouTube Automation Agent running on port ${PORT}`));
-      console.log(chalk.gray('─'.repeat(50)));
-      console.log(chalk.white('📊 Dashboard: ') + chalk.cyan(`http://localhost:${PORT}`));
-      console.log(chalk.white('🔧 API Health: ') + chalk.cyan(`http://localhost:${PORT}/health`));
-      console.log(chalk.white('📅 Schedule: ') + chalk.cyan(`http://localhost:${PORT}/schedule`));
-      console.log(chalk.white('📈 Analytics: ') + chalk.cyan(`http://localhost:${PORT}/analytics`));
-      console.log(chalk.gray('─'.repeat(50)));
-      if (this.setupRequired) {
-        console.log(chalk.yellow('\n⚙️  Setup is required. The dashboard is available; run npm run walkthrough to enable generation.'));
-      } else {
-        console.log(chalk.yellow('\n🤖 Automation is active. Approved content will be published on schedule.'));
-      }
+
+    this.server = this.app.listen(port, host);
+    await new Promise((resolve, reject) => {
+      this.server.once('listening', resolve);
+      this.server.once('error', reject);
     });
+
+    return { url: `http://${host}:${port}`, setupRequired: this.setupRequired };
+  }
+
+  async shutdown() {
+    this.logger.info('Shutting down...');
+    if (this.scheduler) await this.scheduler.pauseAutomation();
+    if (this.server) {
+      const closed = new Promise(resolve => this.server.close(resolve));
+      // server.close() only stops accepting new connections — its callback
+      // waits for existing ones to end on their own, which a keep-alive
+      // client (e.g. the dashboard polling every 8s) never does. Force them
+      // closed so shutdown doesn't hang forever on a still-connected client.
+      this.server.closeAllConnections();
+      await closed;
+    }
+    if (this.db) await this.db.close();
   }
 }
 
 // Start the agent
 if (require.main === module) {
   const agent = new YouTubeAutomationAgent();
-  agent.start().catch(error => {
-    console.error(chalk.red('Fatal error:'), error);
-    process.exit(1);
-  });
+  agent.start()
+    .then(({ url, setupRequired }) => {
+      console.log(chalk.green(`\n✅ YouTube Automation Agent running at ${url}`));
+      console.log(chalk.gray('─'.repeat(50)));
+      console.log(chalk.white('📊 Dashboard: ') + chalk.cyan(url));
+      console.log(chalk.white('🔧 API Health: ') + chalk.cyan(`${url}/health`));
+      console.log(chalk.white('📅 Schedule: ') + chalk.cyan(`${url}/schedule`));
+      console.log(chalk.white('📈 Analytics: ') + chalk.cyan(`${url}/analytics`));
+      console.log(chalk.gray('─'.repeat(50)));
+      if (setupRequired) {
+        console.log(chalk.yellow('\n⚙️  Setup is required. The dashboard is available; run npm run walkthrough to enable generation.'));
+      } else {
+        console.log(chalk.yellow('\n🤖 Automation is active. Approved content will be published on schedule.'));
+      }
+    })
+    .catch(error => {
+      console.error(chalk.red('Fatal error:'), error);
+      process.exit(1);
+    });
+
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, async () => {
+      await agent.shutdown();
+      process.exit(0);
+    });
+  }
 }
 
 module.exports = { YouTubeAutomationAgent };

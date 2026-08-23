@@ -4,6 +4,7 @@ const path = require('path');
 const sharp = require('sharp');
 const { runFFmpeg } = require('./ffmpeg');
 const { ProvenanceService } = require('./provenance-service');
+const paths = require('./paths');
 
 const VIDEO_EXTENSIONS = new Set(['.mp4']);
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
@@ -125,7 +126,7 @@ class SceneRepairService {
     this.videoGenerator = videoGenerator;
     this.mediaGeneration = videoGenerator?.mediaGeneration;
     this.logger = options.logger || { info() {}, warn() {}, error() {} };
-    this.dataRoot = options.dataRoot || path.join(__dirname, '..', 'data');
+    this.dataRoot = options.dataRoot || paths.dataDir;
   }
 
   async ensureManifest(bundle) {

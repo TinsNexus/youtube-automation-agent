@@ -5,6 +5,10 @@ const path = require('path');
 const { Logger } = require('../utils/logger');
 const { assertValidYouTubeMetadata } = require('../utils/youtube-metadata-validator');
 
+// Documented YouTube Data API v3 costs, in quota units.
+const QUOTA_COST = { insert: 1600, thumbnail: 50, captions: 400 };
+const DAILY_QUOTA_LIMIT = parseInt(process.env.YOUTUBE_DAILY_QUOTA_LIMIT || '10000', 10);
+
 class PublishingSchedulingAgent {
   constructor(db, credentials) {
     this.db = db;
@@ -175,35 +179,67 @@ class PublishingSchedulingAgent {
         }
         throw error;
       }
-      
+
       // Update database
       scheduleEntry.status = 'published';
       scheduleEntry.publishedAt = new Date().toISOString();
       scheduleEntry.youtubeId = uploadResult.id;
       scheduleEntry.youtubeUrl = `https://www.youtube.com/watch?v=${uploadResult.id}`;
-      
+      if (uploadResult.warnings?.length) {
+        scheduleEntry.error = `Published with warnings: ${uploadResult.warnings.join(', ')}`;
+        this.logger.warn(`Content published with warnings for ${contentId}: ${uploadResult.warnings.join(', ')}`);
+      }
+
       await this.db.updateScheduleEntry(scheduleEntry);
       await this.syncShortStatus(scheduleEntry, 'published');
-      
+
       // Remove from queue
       this.publishQueue = this.publishQueue.filter(entry => entry.productionId !== scheduleEntry.productionId);
-      
+
       this.logger.success(`Content published: ${scheduleEntry.youtubeUrl}`);
       return scheduleEntry;
     } catch (error) {
-      this.logger.error('Failed to publish content:', error);
+      if (this.isQuotaExceededError(error)) {
+        this.logger.error(`YouTube API quota exceeded while publishing ${contentId}: ${error.message}`);
+      } else {
+        this.logger.error('Failed to publish content:', error);
+      }
       throw error;
     }
   }
 
+  isQuotaExceededError(error) {
+    if (error?.code === 'quotaExceeded') return true;
+    const reasons = error?.errors?.map(e => e.reason) || error?.response?.data?.error?.errors?.map(e => e.reason) || [];
+    return reasons.includes('quotaExceeded') || reasons.includes('dailyLimitExceeded');
+  }
+
+  async getQuotaStatus() {
+    const { used } = await this.db.getQuotaUsage();
+    return { used, limit: DAILY_QUOTA_LIMIT, remaining: Math.max(0, DAILY_QUOTA_LIMIT - used) };
+  }
+
   async uploadToYouTube(scheduleEntry) {
     const { metadata } = scheduleEntry;
+
+    const quota = await this.db.getQuotaUsage();
+    if (quota.used + QUOTA_COST.insert > DAILY_QUOTA_LIMIT) {
+      const error = new Error(
+        `YouTube API daily quota would be exceeded (${quota.used}/${DAILY_QUOTA_LIMIT} units used, this upload needs ${QUOTA_COST.insert}). Quota resets at midnight Pacific Time.`
+      );
+      error.code = 'quotaExceeded';
+      throw error;
+    }
+
     const validation = assertValidYouTubeMetadata(metadata.seo);
     if (validation.warnings.length) {
       this.logger.warn(`YouTube metadata warnings: ${validation.warnings.join(' ')}`);
     }
     const safeMetadata = validation.value;
-    
+
+    const scheduled = scheduleEntry.publishTime
+      && new Date(scheduleEntry.publishTime).getTime() > Date.now();
+
     // Prepare video metadata
     const videoMetadata = {
       snippet: {
@@ -215,8 +251,11 @@ class PublishingSchedulingAgent {
         defaultAudioLanguage: safeMetadata.defaultAudioLanguage
       },
       status: {
-        privacyStatus: metadata.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private',
-        publishAt: scheduleEntry.publishTime,
+        // publishAt is only valid when privacyStatus is 'private'
+        privacyStatus: scheduled
+          ? 'private'
+          : (metadata.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private'),
+        ...(scheduled ? { publishAt: scheduleEntry.publishTime } : {}),
         selfDeclaredMadeForKids: false,
         containsSyntheticMedia: metadata.containsSyntheticMedia === true
       }
@@ -235,23 +274,30 @@ class PublishingSchedulingAgent {
     
     const videoId = videoUpload.data.id;
     this.logger.info(`Video uploaded with ID: ${videoId}`);
+    await this.db.addQuotaUsage(QUOTA_COST.insert);
     scheduleEntry.status = 'uploaded';
     scheduleEntry.youtubeId = videoId;
     scheduleEntry.youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
     scheduleEntry.error = null;
     await this.db.updateScheduleEntry(scheduleEntry);
-    
+
+    const warnings = [];
+
     // Upload thumbnail
     if (metadata.thumbnail && metadata.thumbnail.path) {
-      await this.uploadThumbnail(videoId, metadata.thumbnail.path);
+      const ok = await this.uploadThumbnail(videoId, metadata.thumbnail.path);
+      if (ok) await this.db.addQuotaUsage(QUOTA_COST.thumbnail);
+      else warnings.push('thumbnail_upload_failed');
     }
-    
+
     // Upload captions
     if (metadata.captions && metadata.captions.path) {
-      await this.uploadCaptions(videoId, metadata.captions.path);
+      const ok = await this.uploadCaptions(videoId, metadata.captions.path);
+      if (ok) await this.db.addQuotaUsage(QUOTA_COST.captions);
+      else warnings.push('captions_upload_failed');
     }
-    
-    return videoUpload.data;
+
+    return { ...videoUpload.data, warnings };
   }
 
   async isNarrationReady(audio = {}) {
@@ -322,24 +368,26 @@ class PublishingSchedulingAgent {
   async uploadThumbnail(videoId, thumbnailPath) {
     try {
       const thumbnailBuffer = await fs.readFile(thumbnailPath);
-      
+
       await this.youtube.thumbnails.set({
         videoId: videoId,
         media: {
           body: thumbnailBuffer
         }
       });
-      
+
       this.logger.info(`Thumbnail uploaded for video: ${videoId}`);
+      return true;
     } catch (error) {
       this.logger.error(`Failed to upload thumbnail: ${error.message}`);
+      return false;
     }
   }
 
   async uploadCaptions(videoId, captionsPath) {
     try {
       const captionsContent = await fs.readFile(captionsPath, 'utf8');
-      
+
       await this.youtube.captions.insert({
         part: 'snippet',
         requestBody: {
@@ -354,10 +402,12 @@ class PublishingSchedulingAgent {
           body: captionsContent
         }
       });
-      
+
       this.logger.info(`Captions uploaded for video: ${videoId}`);
+      return true;
     } catch (error) {
       this.logger.error(`Failed to upload captions: ${error.message}`);
+      return false;
     }
   }
 

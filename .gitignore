@@ -71,6 +71,7 @@ build/
 !examples/*.png
 !examples/*.jpg
 !assets/youtube-automation-agent.jpg
+!electron/assets/*.png
 
 # Backup files
 *.backup
@@ -87,3 +88,6 @@ data/captions/
 data/scripts/
 data/videos/
 data/thumbnails/
+
+# Internal growth/marketing artifacts (not project code)
+reports/

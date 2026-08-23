@@ -1,11 +1,12 @@
-const sqlite3 = require('sqlite3').verbose();
+const SqliteDatabase = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs').promises;
 const { Logger } = require('../utils/logger');
+const paths = require('../utils/paths');
 
 class Database {
   constructor() {
-    this.dbPath = path.join(__dirname, '..', 'data', 'youtube_automation.db');
+    this.dbPath = paths.dbPath;
     this.db = null;
     this.logger = new Logger('Database');
   }
@@ -18,16 +19,75 @@ class Database {
       await fs.mkdir(path.dirname(this.dbPath), { recursive: true });
       
       // Connect to database
-      this.db = new sqlite3.Database(this.dbPath);
-      
-      // Create tables
-      await this.createTables();
-      
+      this.db = new SqliteDatabase(this.dbPath);
+
+      // Create/upgrade schema
+      await this.migrate();
+
       this.logger.success('Database initialized successfully');
       return true;
     } catch (error) {
       this.logger.error('Failed to initialize database:', error);
       throw error;
+    }
+  }
+
+  async migrate() {
+    let version = this.db.pragma('user_version', { simple: true });
+
+    // createTables() is exclusively CREATE TABLE IF NOT EXISTS / INSERT OR
+    // IGNORE / column-existence-checked ALTER statements, so it's safe and
+    // cheap to run on every boot. New tables added later then just show up —
+    // they no longer need a matching version bump to backfill onto databases
+    // that already migrated past the version where the table was introduced
+    // (this bit us twice: operator_runs/channel_strategies/... at v1->v2, then
+    // retention_snapshots/production_scenes/shorts_clips going unnoticed
+    // because nothing bumped the version when they were added upstream).
+    await this.createTables();
+
+    const migrations = [
+      /* v1 */ async () => {},
+      /* v2 */ async () => {},
+      // publish_schedule originally had a FOREIGN KEY (production_id) REFERENCES
+      // productions(id), but Shorts schedule entries store the short clip's own
+      // id there, which never gets a `productions` row — only the parent video
+      // does. Under better-sqlite3 (unlike the old sqlite3 driver) foreign keys
+      // are enforced by default, so that insert now fails outright. Rebuild the
+      // table without the constraint for anyone who already reached v1/v2.
+      /* v3 */ async () => {
+        const hasForeignKey = this.db.pragma('foreign_key_list(publish_schedule)').length > 0;
+        if (!hasForeignKey) return;
+        this.db.pragma('foreign_keys = OFF');
+        try {
+          this.db.exec(`
+            CREATE TABLE publish_schedule_new (
+              id TEXT PRIMARY KEY,
+              production_id TEXT NOT NULL,
+              title TEXT NOT NULL,
+              publish_time TEXT NOT NULL,
+              status TEXT DEFAULT 'scheduled',
+              priority INTEGER DEFAULT 50,
+              metadata TEXT,
+              youtube_id TEXT,
+              youtube_url TEXT,
+              published_at TEXT,
+              error_message TEXT,
+              created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO publish_schedule_new SELECT * FROM publish_schedule;
+            DROP TABLE publish_schedule;
+            ALTER TABLE publish_schedule_new RENAME TO publish_schedule;
+          `);
+        } finally {
+          this.db.pragma('foreign_keys = ON');
+        }
+      }
+    ];
+
+    for (; version < migrations.length; version++) {
+      this.logger.info(`Migrating database v${version} → v${version + 1}`);
+      await migrations[version]();
+      this.db.pragma(`user_version = ${version + 1}`);
     }
   }
 
@@ -115,7 +175,10 @@ class Database {
         FOREIGN KEY (seo_id) REFERENCES seo_data(id)
       )`,
       
-      // Publishing Schedule
+      // Publishing Schedule. No FK on production_id: Shorts (see
+      // shorts-repurposing-service.js) schedule entries use the short clip's
+      // own id here, which never gets its own row in `productions` — only its
+      // parent video does.
       `CREATE TABLE IF NOT EXISTS publish_schedule (
         id TEXT PRIMARY KEY,
         production_id TEXT NOT NULL,
@@ -128,8 +191,7 @@ class Database {
         youtube_url TEXT,
         published_at TEXT,
         error_message TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (production_id) REFERENCES productions(id)
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`,
       
       // Analytics Reports
@@ -1982,6 +2044,32 @@ class Database {
     );
   }
 
+  // YouTube API quota tracking. Google resets quota at midnight Pacific Time,
+  // not UTC — using the wrong day key would report a fresh quota for hours
+  // while Google's is still exhausted. See agents/publishing-scheduling-agent.js.
+  quotaDayKey() {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date());
+  }
+
+  async getQuotaUsage() {
+    const today = this.quotaDayKey();
+    const storedDate = await this.getSetting('youtube_quota_date');
+    if (storedDate !== today) {
+      await this.setSetting('youtube_quota_date', today);
+      await this.setSetting('youtube_quota_used', '0');
+      return { date: today, used: 0 };
+    }
+    const used = parseInt(await this.getSetting('youtube_quota_used') || '0', 10);
+    return { date: today, used };
+  }
+
+  async addQuotaUsage(units) {
+    const { used } = await this.getQuotaUsage();
+    const next = used + units;
+    await this.setSetting('youtube_quota_used', String(next));
+    return next;
+  }
+
   async getAllSettings() {
     const rows = await this.getAllRows('SELECT * FROM settings ORDER BY key');
     return rows.reduce((settings, row) => {
@@ -2032,52 +2120,40 @@ class Database {
     return `${prefix}_${Date.now()}_${Math.random().toString(36).substring(7)}`;
   }
 
+  // better-sqlite3 throws on `undefined` bind params (sqlite3 silently treated
+  // them as NULL) — normalize here so every existing call site stays correct.
+  bindParams(params) {
+    return params.map(p => (p === undefined ? null : p));
+  }
+
   async executeQuery(query, params = []) {
-    return new Promise((resolve, reject) => {
-      this.db.run(query, params, function(error) {
-        if (error) {
-          reject(error);
-        } else {
-          resolve({ lastID: this.lastID, changes: this.changes });
-        }
-      });
-    });
+    const result = this.db.prepare(query).run(...this.bindParams(params));
+    return { lastID: result.lastInsertRowid, changes: result.changes };
   }
 
   async getRow(query, params = []) {
-    return new Promise((resolve, reject) => {
-      this.db.get(query, params, (error, row) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(row);
-        }
-      });
-    });
+    return this.db.prepare(query).get(...this.bindParams(params));
+  }
+
+  async transaction(fn) {
+    await this.executeQuery('BEGIN');
+    try {
+      const result = await fn();
+      await this.executeQuery('COMMIT');
+      return result;
+    } catch (error) {
+      await this.executeQuery('ROLLBACK');
+      throw error;
+    }
   }
 
   async getAllRows(query, params = []) {
-    return new Promise((resolve, reject) => {
-      this.db.all(query, params, (error, rows) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(rows || []);
-        }
-      });
-    });
+    return this.db.prepare(query).all(...this.bindParams(params)) || [];
   }
 
   async close() {
     if (this.db) {
-      return new Promise((resolve) => {
-        this.db.close((error) => {
-          if (error) {
-            this.logger.error('Error closing database:', error);
-          }
-          resolve();
-        });
-      });
+      this.db.close();
     }
   }
 
@@ -2110,7 +2186,7 @@ class Database {
       this.getRow('SELECT COUNT(*) as count FROM content_strategies'),
       this.getRow('SELECT COUNT(*) as count FROM scripts'),
       this.getRow('SELECT COUNT(*) as count FROM productions'),
-      this.getRow('SELECT COUNT(*) as count FROM publish_schedule WHERE status = "published"'),
+      this.getRow("SELECT COUNT(*) as count FROM publish_schedule WHERE status = 'published'"),
       this.getRow('SELECT COUNT(*) as count FROM analytics_reports')
     ]);
 

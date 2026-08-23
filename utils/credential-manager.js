@@ -4,13 +4,14 @@ const { google } = require('googleapis');
 const inquirer = require('inquirer');
 const chalk = require('chalk');
 const { Logger } = require('./logger');
+const paths = require('./paths');
 const { PROVIDERS, GEMINI_MODELS, GEMINI_DEFAULT_MODEL } = require('./ai-text-service');
 
 class CredentialManager {
   constructor() {
     this.logger = new Logger('CredentialManager');
-    this.credentialsPath = path.join(__dirname, '..', 'config', 'credentials.json');
-    this.tokensPath = path.join(__dirname, '..', 'config', 'tokens.json');
+    this.credentialsPath = path.join(paths.configDir, 'credentials.json');
+    this.tokensPath = path.join(paths.configDir, 'tokens.json');
     this.credentials = {};
     this.tokens = {};
   }
@@ -45,13 +46,19 @@ class CredentialManager {
   }
 
   async saveCredentials() {
-    await fs.mkdir(path.dirname(this.credentialsPath), { recursive: true });
-    await fs.writeFile(this.credentialsPath, JSON.stringify(this.credentials, null, 2));
+    await fs.mkdir(path.dirname(this.credentialsPath), { recursive: true, mode: 0o700 });
+    await fs.writeFile(this.credentialsPath, JSON.stringify(this.credentials, null, 2), { mode: 0o600 });
+    // `mode` above only applies when the file/dir is first created — chmod
+    // explicitly so an existing 644 file from before this fix gets repaired.
+    await fs.chmod(this.credentialsPath, 0o600).catch(() => {});
+    await fs.chmod(path.dirname(this.credentialsPath), 0o700).catch(() => {});
   }
 
   async saveTokens() {
-    await fs.mkdir(path.dirname(this.tokensPath), { recursive: true });
-    await fs.writeFile(this.tokensPath, JSON.stringify(this.tokens, null, 2));
+    await fs.mkdir(path.dirname(this.tokensPath), { recursive: true, mode: 0o700 });
+    await fs.writeFile(this.tokensPath, JSON.stringify(this.tokens, null, 2), { mode: 0o600 });
+    await fs.chmod(this.tokensPath, 0o600).catch(() => {});
+    await fs.chmod(path.dirname(this.tokensPath), 0o700).catch(() => {});
   }
 
   // YouTube API Authentication
@@ -505,6 +512,23 @@ class CredentialManager {
 
     process.env[key] = String(value);
   }
+
+  // Re-applies channel/content settings from the saved credentials file as env
+  // vars. The CLI wizard sets these directly in its own short-lived process,
+  // which is gone by the time `npm start`/the packaged app boots — this makes
+  // them survive a restart instead of silently reverting to hardcoded defaults.
+  syncEnvVars() {
+    const channel = this.credentials.channel || {};
+    const content = this.credentials.content || {};
+    this.setEnvIfPresent('CHANNEL_NAME', channel.channelName);
+    this.setEnvIfPresent('DEFAULT_AUTHOR', channel.channelName);
+    this.setEnvIfPresent('DEFAULT_PRIVACY_STATUS', channel.defaultPrivacy);
+    this.setEnvIfPresent('TARGET_AUDIENCE', content.targetAudience);
+    if (Array.isArray(content.competitorChannels) && content.competitorChannels.length) {
+      this.setEnvIfPresent('COMPETITOR_CHANNELS', content.competitorChannels.join(','));
+    }
+  }
+
   // Validation methods
   hasAITextProvider() {
     if (this.credentials.openai?.apiKey || this.credentials.gemini?.apiKey || this.credentials.aiProvider?.apiKey) {

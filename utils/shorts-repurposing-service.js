@@ -2,6 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const { runFFmpeg } = require('./ffmpeg');
 const { Logger } = require('./logger');
+const paths = require('./paths');
 
 const LAYOUTS = new Set(['blur', 'crop', 'stacked']);
 
@@ -33,7 +34,7 @@ class ShortsRepurposingService {
     this.db = db;
     this.publishing = publishing;
     this.logger = options.logger || new Logger('ShortsRepurposing');
-    this.dataRoot = options.dataRoot || path.join(__dirname, '..', 'data', 'shorts');
+    this.dataRoot = options.dataRoot || path.join(paths.dataDir, 'shorts');
     this.width = Number(options.width || 1080);
     this.height = Number(options.height || 1920);
     this.runFFmpeg = options.runFFmpeg || runFFmpeg;

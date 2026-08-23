@@ -1,6 +1,7 @@
 const winston = require('winston');
 const path = require('path');
 const chalk = require('chalk');
+const paths = require('./paths');
 
 class Logger {
   constructor(component = 'System') {
@@ -9,7 +10,7 @@ class Logger {
   }
 
   createWinstonLogger() {
-    const logDir = path.join(__dirname, '..', 'logs');
+    const logDir = paths.logsDir;
     
     return winston.createLogger({
       level: process.env.LOG_LEVEL || 'info',

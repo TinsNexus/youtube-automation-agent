@@ -145,7 +145,7 @@ class SystemTest {
     await db.initialize();
 
     await db.executeQuery(
-      'INSERT INTO automation_events (event_type, status, data, created_at) VALUES (?, ?, ?, datetime("now"))',
+      "INSERT INTO automation_events (event_type, status, data, created_at) VALUES (?, ?, ?, datetime('now'))",
       ['test_event', 'success', JSON.stringify({ ok: true })]
     );
 
@@ -1908,6 +1908,25 @@ class SystemTest {
       if (legacyResult !== 'legacy-ok') throw new Error('Legacy fallback did not return content');
       if (attempt !== 2) throw new Error('Expected exactly one retry with max_tokens');
 
+      // Reasoning-style models (gpt-5.x) reject a non-default temperature —
+      // the service must retry the same request with temperature dropped.
+      let tempAttempt = 0;
+      let sawTemperatureOnRetry = false;
+      service.client.chat.completions.create = async (params) => {
+        tempAttempt++;
+        if (tempAttempt === 1) {
+          const err = new Error("Unsupported value: 'temperature' does not support 0.7 with this model. Only the default (1) value is supported.");
+          err.status = 400;
+          throw err;
+        }
+        sawTemperatureOnRetry = 'temperature' in params;
+        return { choices: [{ message: { content: 'temp-ok' } }] };
+      };
+      const tempResult = await service.generateText('temperature prompt');
+      if (tempResult !== 'temp-ok') throw new Error('Temperature fallback did not return content');
+      if (tempAttempt !== 2) throw new Error('Expected exactly one retry with temperature dropped');
+      if (sawTemperatureOnRetry) throw new Error('Retry must not include temperature after the model rejected it');
+
       // An empty model body must surface as a descriptive error, not the cryptic
       // "Unexpected end of JSON input" the agents used to log.
       service.client.chat.completions.create = async () => ({ choices: [{ message: { content: '' } }] });
@@ -2070,20 +2089,31 @@ class SystemTest {
       return;
     }
 
-    const sharp = require('sharp');
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-slides-'));
 
     try {
+      const generator = new AIVideoGenerator({});
+
+      // Slide rendering must not shell out to a browser (Playwright removed) and
+      // must still escape LLM-provided text — a raw '<' or '&' must not reach the SVG parser.
+      const script = {
+        title: 'Title with <tag> & "quotes"',
+        mainContent: { sections: [{ title: 'Section & <b>bold</b>', content: 'Body text '.repeat(20) }] }
+      };
+      const deck = generator.buildSlideDeck(script);
+      if (deck.length !== 3) {
+        throw new Error(`Expected 3 slides (title, section, subscribe), got ${deck.length}`);
+      }
+
       const stills = [];
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < deck.length; i++) {
         const stillPath = path.join(dir, `slide_${i}.png`);
-        await sharp({
-          create: { width: 320, height: 180, channels: 3, background: { r: 60 * i, g: 80, b: 160 } }
-        }).png().toFile(stillPath);
+        await generator.renderSlideImage(deck[i], [], stillPath);
+        const stats = await fs.stat(stillPath);
+        if (!stats.size) throw new Error(`Slide ${i} rendered empty`);
         stills.push(stillPath);
       }
 
-      const generator = new AIVideoGenerator({});
       if (generator.parseDurationSeconds('2:05') !== 125 || generator.parseDurationSeconds('1:02:03') !== 3723) {
         throw new Error('Human-readable production durations are not converted to timeline seconds');
       }
@@ -2249,20 +2279,20 @@ class SystemTest {
 
   async testDirectories() {
     const fs = require('fs').promises;
-    
-    const requiredDirs = [
-      'config',
-      'logs', 
-      'data',
-      'agents',
-      'database',
-      'utils',
-      'schedules'
-    ];
+    const paths = require('./utils/paths');
 
-    for (const dir of requiredDirs) {
-      const dirPath = path.join(__dirname, dir);
-      await fs.access(dirPath);
+    // Code directories ship with the repo and must always exist
+    const codeDirs = ['agents', 'database', 'utils', 'schedules'];
+    for (const dir of codeDirs) {
+      await fs.access(path.join(__dirname, dir));
+    }
+
+    // Runtime directories (data/config/logs) are created on demand, not committed —
+    // and under Electron they live outside the repo entirely (see utils/paths.js).
+    // Verify they can be created rather than assuming a prior run left them behind.
+    for (const dir of [paths.dataDir, paths.configDir, paths.logsDir]) {
+      await fs.mkdir(dir, { recursive: true });
+      await fs.access(dir);
     }
 
     this.logger.info('Directory structure test completed successfully');

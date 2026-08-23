@@ -26,13 +26,17 @@ class DailyAutomation {
   }
 
   async setupScheduledTasks() {
+    const timezone = (await this.db.getSetting('channel_timezone'))
+      || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    this.logger.info(`Scheduling automation tasks in timezone: ${timezone}`);
+
     // Daily content generation at 6:00 AM
-    this.scheduledTasks.set('daily-content-generation', 
+    this.scheduledTasks.set('daily-content-generation',
       cron.schedule('0 6 * * *', async () => {
         if (this.isEnabled) {
           await this.runDailyContentGeneration();
         }
-      }, { scheduled: false })
+      }, { scheduled: false, timezone })
     );
 
     // Publishing queue processing every 15 minutes
@@ -41,7 +45,7 @@ class DailyAutomation {
         if (this.isEnabled) {
           await this.processPublishQueue();
         }
-      }, { scheduled: false })
+      }, { scheduled: false, timezone })
     );
 
     // Analytics collection at 9:00 AM daily
@@ -50,7 +54,7 @@ class DailyAutomation {
         if (this.isEnabled) {
           await this.collectDailyAnalytics();
         }
-      }, { scheduled: false })
+      }, { scheduled: false, timezone })
     );
 
     // Weekly strategy review on Sundays at 8:00 AM
@@ -59,7 +63,7 @@ class DailyAutomation {
         if (this.isEnabled) {
           await this.weeklyStrategyReview();
         }
-      }, { scheduled: false })
+      }, { scheduled: false, timezone })
     );
 
     // Optimization tasks daily at 10:00 PM
@@ -68,7 +72,7 @@ class DailyAutomation {
         if (this.isEnabled) {
           await this.runDailyOptimization();
         }
-      }, { scheduled: false })
+      }, { scheduled: false, timezone })
     );
 
     // Database maintenance weekly on Saturdays at 3:00 AM
@@ -77,7 +81,7 @@ class DailyAutomation {
         if (this.isEnabled) {
           await this.databaseMaintenance();
         }
-      }, { scheduled: false })
+      }, { scheduled: false, timezone })
     );
 
     // Start all scheduled tasks
@@ -449,9 +453,10 @@ class DailyAutomation {
   async cleanupOldFiles() {
     // Clean up temporary files older than 7 days
     const path = require('path');
-    
+    const paths = require('../utils/paths');
+
     const tempDir = path.join(__dirname, '..', 'temp');
-    const uploadsDir = path.join(__dirname, '..', 'uploads');
+    const uploadsDir = paths.uploadsDir;
     
     try {
       await this.cleanDirectoryOldFiles(tempDir, 7);
@@ -495,7 +500,7 @@ class DailyAutomation {
 
   async logAutomationEvent(eventType, status, data = {}) {
     await this.db.executeQuery(
-      'INSERT INTO automation_events (event_type, status, data, created_at) VALUES (?, ?, ?, datetime("now"))',
+      "INSERT INTO automation_events (event_type, status, data, created_at) VALUES (?, ?, ?, datetime('now'))",
       [eventType, status, JSON.stringify(data)]
     );
   }

@@ -66,6 +66,14 @@ class AITextService {
       return this._initOpenAICompatible(PROVIDERS[provider], apiKey, model);
     }
 
+    // credential-manager.js's OpenAI-specific setup stores the key under
+    // `credentials.openai`, not `credentials.aiProvider` (that shape is only
+    // used by the other providers) — check it explicitly or OpenAI users who
+    // ran the wizard fall through to templates despite having a valid key.
+    if (credentials.openai?.apiKey) {
+      return this._initOpenAICompatible(PROVIDERS.openai, credentials.openai.apiKey, credentials.openai.model);
+    }
+
     for (const [, preset] of Object.entries(PROVIDERS)) {
       const key = process.env[preset.envKey];
       if (key) {
@@ -126,35 +134,36 @@ class AITextService {
       throw new Error('No AI text provider configured');
     }
 
-    const params = {
+    // Reasoning-style models (gpt-5.x and later) reject a non-default
+    // temperature, and newer models reject the legacy max_tokens parameter
+    // in favor of max_completion_tokens (or vice versa on older ones/other
+    // providers). Detected via the API's own 400 responses rather than a
+    // hardcoded model-name list, since new reasoning models ship faster
+    // than such a list could track them.
+    let params = {
       model,
       messages: [{ role: 'user', content: prompt }],
       temperature,
+      max_completion_tokens: maxTokens,
     };
 
-    try {
-      // Newer OpenAI models (gpt-5.x and later) reject the legacy max_tokens
-      // parameter with a 400 error and require max_completion_tokens instead.
-      const response = await this.client.chat.completions.create({
-        ...params,
-        max_completion_tokens: maxTokens,
-      });
-      return this._extractContent(response);
-    } catch (error) {
-      // Older models and some providers reject max_completion_tokens with a 400;
-      // retry the same request using the legacy max_tokens spelling.
-      if (
-        error &&
-        error.status === 400 &&
-        /max(_completion)?_tokens/i.test(error.message || '')
-      ) {
-        const response = await this.client.chat.completions.create({
-          ...params,
-          max_tokens: maxTokens,
-        });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await this.client.chat.completions.create(params);
         return this._extractContent(response);
+      } catch (error) {
+        if (error?.status === 400 && 'max_completion_tokens' in params && /max(_completion)?_tokens/i.test(error.message || '')) {
+          const { max_completion_tokens: _drop, ...rest } = params;
+          params = { ...rest, max_tokens: maxTokens };
+          continue;
+        }
+        if (error?.status === 400 && 'temperature' in params && /temperature/i.test(error.message || '')) {
+          const { temperature: _drop, ...rest } = params;
+          params = rest;
+          continue;
+        }
+        throw error;
       }
-      throw error;
     }
   }
 
