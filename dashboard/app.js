@@ -838,8 +838,8 @@ async function refreshContentDialog(productionId, message) {
 }
 
 async function uploadSceneAsset(productionId, sceneId, file) {
-  if (!confirm('Confirm you own or have permission to use this replacement asset.')) return;
-  const synthetic = confirm('Does this replacement contain realistic altered or synthetic media that should be disclosed to YouTube?');
+  if (!confirm(t('confirm.own_permission_replacement'))) return;
+  const synthetic = confirm(t('confirm.synthetic_media_disclosure'));
   $('#loading').classList.add('active');
   try {
     await api(`/api/content/${encodeURIComponent(productionId)}/scenes/${encodeURIComponent(sceneId)}/asset`, {
@@ -852,7 +852,7 @@ async function uploadSceneAsset(productionId, sceneId, file) {
         'x-synthetic-media': String(synthetic)
       }
     });
-    await refreshContentDialog(productionId, 'Scene asset replaced. Rebuild before approval.');
+    await refreshContentDialog(productionId, t('confirm.scene_asset_replaced_toast'));
   } catch (error) {
     showToast(error.message, 'error');
   } finally {
@@ -1001,12 +1001,12 @@ document.addEventListener('click', async event => {
   if (proposeShorts) {
     const productionId = proposeShorts.dataset.proposeShorts;
     const replacing = Boolean(document.querySelector('[data-short-card]'));
-    if (replacing && !confirm('Replace the current editable Short drafts? Rendered draft files will remain on disk but their manifest will be replaced.')) return;
+    if (replacing && !confirm(t('confirm.replace_short_drafts'))) return;
     try {
       await api(`/api/content/${encodeURIComponent(productionId)}/shorts/propose`, {
         method: 'POST', body: JSON.stringify({ count: 3, replace: replacing })
       });
-      await refreshContentDialog(productionId, 'Three local Short drafts created from the current scene timeline.');
+      await refreshContentDialog(productionId, t('confirm.shorts_created_toast'));
     } catch (error) {
       showToast(error.message, 'error');
     }
@@ -1025,21 +1025,21 @@ document.addEventListener('click', async event => {
         method: 'PATCH', body: JSON.stringify(values)
       });
       if (shortAction.matches('[data-short-save]')) {
-        await refreshContentDialog(productionId, 'Short draft saved.');
+        await refreshContentDialog(productionId, t('confirm.short_saved_toast'));
         return;
       }
       if (shortAction.matches('[data-short-render]')) {
         await api(`/api/content/${encodeURIComponent(productionId)}/shorts/${encodeURIComponent(clipId)}/render`, {
           method: 'POST', body: '{}'
         });
-        await refreshContentDialog(productionId, 'Vertical Short rendered locally with mobile captions.');
+        await refreshContentDialog(productionId, t('confirm.short_rendered_toast'));
         return;
       }
-      if (!confirm('Confirm the inherited evidence, media rights, privacy, and publish time for this Short?')) return;
+      if (!confirm(t('confirm.approve_short_evidence'))) return;
       await api(`/api/content/${encodeURIComponent(productionId)}/shorts/${encodeURIComponent(clipId)}/approve`, {
         method: 'POST', body: JSON.stringify({ ...values, confirmed: true })
       });
-      await refreshContentDialog(productionId, 'Short approved and added to the publishing schedule.');
+      await refreshContentDialog(productionId, t('confirm.short_approved_toast'));
     } catch (error) {
       showToast(error.message, 'error');
     }
@@ -1057,7 +1057,7 @@ document.addEventListener('click', async event => {
         await api(`/api/content/${encodeURIComponent(productionId)}/scenes/${encodeURIComponent(sceneId)}`, {
           method: 'PATCH', body: JSON.stringify({ locked: !card.classList.contains('locked') })
         });
-        await refreshContentDialog(productionId, card.classList.contains('locked') ? 'Scene unlocked.' : 'Scene locked.');
+        await refreshContentDialog(productionId, card.classList.contains('locked') ? t('confirm.scene_unlocked_toast') : t('confirm.scene_locked_toast'));
         return;
       }
       if (sceneButton.matches('[data-scene-move]')) {
@@ -1070,33 +1070,33 @@ document.addEventListener('click', async event => {
         await api(`/api/content/${encodeURIComponent(productionId)}/scenes/reorder`, {
           method: 'POST', body: JSON.stringify({ sceneIds: ids })
         });
-        await refreshContentDialog(productionId, 'Timeline order updated. Rebuild before approval.');
+        await refreshContentDialog(productionId, t('confirm.timeline_reordered_toast'));
         return;
       }
       await api(`/api/content/${encodeURIComponent(productionId)}/scenes/${encodeURIComponent(sceneId)}`, {
         method: 'PATCH', body: JSON.stringify(sceneFormData(card))
       });
       if (sceneButton.matches('[data-scene-save]')) {
-        await refreshContentDialog(productionId, 'Scene draft saved.');
+        await refreshContentDialog(productionId, t('confirm.scene_saved_toast'));
         return;
       }
       if (sceneButton.matches('[data-scene-narration]')) {
-        if (!confirm('Regenerate narration for only this scene? This may consume TTS provider credits; the provider invoice is authoritative.')) return;
+        if (!confirm(t('confirm.regenerate_scene_narration'))) return;
         await api(`/api/content/${encodeURIComponent(productionId)}/scenes/${encodeURIComponent(sceneId)}/narration`, {
           method: 'POST', body: JSON.stringify({ confirmCost: true })
         });
-        await refreshContentDialog(productionId, 'Scene narration regenerated. Rebuild the final video when every narration segment is ready.');
+        await refreshContentDialog(productionId, t('confirm.scene_narration_regenerated_toast'));
         return;
       }
       const estimate = await api(`/api/content/${encodeURIComponent(productionId)}/scenes/${encodeURIComponent(sceneId)}/estimate`);
       const message = estimate.paid
-        ? `Regenerate only this scene with ${estimate.provider} (${estimate.generatedSeconds}s). This consumes provider credits; the provider invoice is authoritative. Continue?`
-        : 'Regenerate only this scene with the configured image provider? A live image request may consume provider credits. Continue?';
+        ? t('confirm.regenerate_scene_paid', { provider: estimate.provider, seconds: estimate.generatedSeconds })
+        : t('confirm.regenerate_scene_local');
       if (!confirm(message)) return;
       await api(`/api/content/${encodeURIComponent(productionId)}/scenes/${encodeURIComponent(sceneId)}/regenerate`, {
         method: 'POST', body: JSON.stringify({ confirmPaid: estimate.paid })
       });
-      await refreshContentDialog(productionId, 'Scene regenerated. Rebuild the final video when the timeline is ready.');
+      await refreshContentDialog(productionId, t('confirm.scene_regenerated_toast'));
     } catch (error) {
       showToast(error.message, 'error');
     }
@@ -1110,17 +1110,17 @@ document.addEventListener('click', async event => {
     const enabled = silenceAction.matches('[data-intentional-silence]');
     let reason = '';
     if (enabled) {
-      reason = prompt('Why is this production intentionally silent? This reason is stored with the approval evidence.') || '';
+      reason = prompt(t('confirm.intentional_silence_reason_prompt')) || '';
       if (!reason) return;
-      if (!confirm('Confirm that this production is intentionally silent. Captions and visuals will remain, and approval will record this override.')) return;
-    } else if (!confirm('Require narration again? Approval will be blocked until missing scene narration is regenerated and the video is rebuilt.')) {
+      if (!confirm(t('confirm.confirm_intentional_silence'))) return;
+    } else if (!confirm(t('confirm.require_narration_again'))) {
       return;
     }
     try {
       await api(`/api/content/${encodeURIComponent(productionId)}/narration/silence`, {
         method: 'POST', body: JSON.stringify({ enabled, confirmed: enabled, reason })
       });
-      await refreshContentDialog(productionId, enabled ? 'Intentional silence recorded. Rebuild before approval.' : 'Narration is required again.');
+      await refreshContentDialog(productionId, enabled ? t('confirm.silence_recorded_toast') : t('confirm.narration_required_toast'));
     } catch (error) {
       showToast(error.message, 'error');
     }
@@ -1130,10 +1130,10 @@ document.addEventListener('click', async event => {
   const rebuildScenes = event.target.closest('[data-rebuild-scenes]');
   if (rebuildScenes) {
     const productionId = rebuildScenes.dataset.rebuildScenes;
-    if (confirm('Rebuild a new final MP4 from the current scene timeline? The previous final video will be preserved.')) {
+    if (confirm(t('confirm.rebuild_scenes'))) {
       try {
         await api(`/api/content/${encodeURIComponent(productionId)}/scenes/rebuild`, { method: 'POST', body: '{}' });
-        await refreshContentDialog(productionId, 'Final video rebuilt from the repaired timeline. Review it before approval.');
+        await refreshContentDialog(productionId, t('confirm.video_rebuilt_toast'));
       } catch (error) {
         showToast(error.message, 'error');
       }
@@ -1166,7 +1166,7 @@ document.addEventListener('click', async event => {
   const saveProvenance = event.target.closest('[data-save-provenance]');
   if (saveProvenance) {
     const productionId = $('#content-review-form')?.dataset.productionId;
-    if (productionId) await persistProvenance(productionId, 'Evidence review saved.').catch(() => {});
+    if (productionId) await persistProvenance(productionId, t('confirm.evidence_saved_toast')).catch(() => {});
     return;
   }
 
@@ -1174,7 +1174,7 @@ document.addEventListener('click', async event => {
   if (save) {
     try {
       await persistProvenance(save.dataset.saveContent);
-      await mutate(`/api/content/${encodeURIComponent(save.dataset.saveContent)}`, 'PATCH', contentFormData(), 'Draft and evidence review saved.');
+      await mutate(`/api/content/${encodeURIComponent(save.dataset.saveContent)}`, 'PATCH', contentFormData(), t('confirm.draft_saved_toast'));
     } catch (_error) { /* toast already shown */ }
   }
 
@@ -1182,23 +1182,23 @@ document.addEventListener('click', async event => {
   if (approve) {
     try {
       await persistProvenance(approve.dataset.approveContent);
-      await mutate(`/api/content/${encodeURIComponent(approve.dataset.approveContent)}/approve`, 'POST', contentFormData(), 'Content approved and scheduled.');
+      await mutate(`/api/content/${encodeURIComponent(approve.dataset.approveContent)}/approve`, 'POST', contentFormData(), t('confirm.content_approved_toast'));
       $('#content-dialog').close();
     } catch (_error) { /* toast already shown */ }
   }
 
   const reject = event.target.closest('[data-reject-content]');
   if (reject) {
-    const notes = prompt('Why are you rejecting this content?', 'Needs a different angle');
+    const notes = prompt(t('confirm.reject_reason_prompt'), t('confirm.reject_reason_default'));
     if (notes !== null) {
-      await mutate(`/api/content/${encodeURIComponent(reject.dataset.rejectContent)}/reject`, 'POST', { notes }, 'Content rejected.').catch(() => {});
+      await mutate(`/api/content/${encodeURIComponent(reject.dataset.rejectContent)}/reject`, 'POST', { notes }, t('confirm.content_rejected_toast')).catch(() => {});
       $('#content-dialog').close();
     }
   }
 
   const retry = event.target.closest('[data-retry-content]');
-  if (retry && confirm('Generate a fresh version using the same topic?')) {
-    await mutate(`/api/content/${encodeURIComponent(retry.dataset.retryContent)}/retry`, 'POST', {}, 'Regeneration started.').catch(() => {});
+  if (retry && confirm(t('confirm.retry_same_topic'))) {
+    await mutate(`/api/content/${encodeURIComponent(retry.dataset.retryContent)}/retry`, 'POST', {}, t('confirm.regeneration_started_toast')).catch(() => {});
     $('#content-dialog').close();
   }
 });
