@@ -25,8 +25,12 @@ class SystemTest {
       { name: 'Operator Workflow API', test: () => this.testOperatorWorkflowAPI() },
       { name: 'Autonomous Channel Operator', test: () => this.testAutonomousChannelOperator() },
       { name: 'Closed-loop Channel Learning', test: () => this.testChannelLearningLoop() },
+      { name: 'Scene-Aware Retention Studio', test: () => this.testSceneAwareRetentionStudio() },
       { name: 'Production Readiness Gate', test: () => this.testProductionReadinessGate() },
       { name: 'Durable Multi-Provider Video Generation', test: () => this.testVideoProviderLayer() },
+      { name: 'Scene Repair Studio', test: () => this.testSceneRepairStudio() },
+      { name: 'Narration Reliability and Recovery', test: () => this.testNarrationReliability() },
+      { name: 'Shorts Repurposing Studio', test: () => this.testShortsRepurposingStudio() },
       { name: 'Research and Provenance Desk', test: () => this.testProvenanceDesk() },
       { name: 'Resumable Generation Checkpoints', test: () => this.testResumableGenerationCheckpoints() },
       { name: 'API Validation and Security', test: () => this.testAPIValidationAndSecurity() },
@@ -579,6 +583,130 @@ class SystemTest {
     this.logger.info('Closed-loop channel learning test completed successfully');
   }
 
+  async testSceneAwareRetentionStudio() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const { ChannelLearningEngine } = require('./utils/channel-learning-engine');
+    const { AnalyticsOptimizationAgent } = require('./agents/analytics-optimization-agent');
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-retention-'));
+    const db = new Database();
+    db.dbPath = path.join(directory, 'retention.db');
+    await db.initialize();
+
+    try {
+      const learning = new ChannelLearningEngine(db);
+      const points = Array.from({ length: 100 }, (_, index) => {
+        const elapsedRatio = (index + 1) / 100;
+        let audienceWatchRatio;
+        let relativeRetentionPerformance;
+        if (elapsedRatio <= 0.17) {
+          audienceWatchRatio = 1 - elapsedRatio * 0.4;
+          relativeRetentionPerformance = 0.64;
+        } else if (elapsedRatio <= 0.5) {
+          audienceWatchRatio = 0.93 - ((elapsedRatio - 0.17) / 0.33) * 0.48;
+          relativeRetentionPerformance = 0.31;
+        } else {
+          audienceWatchRatio = 0.45 - (elapsedRatio - 0.5) * 0.08;
+          relativeRetentionPerformance = 0.7;
+        }
+        return {
+          elapsedRatio,
+          audienceWatchRatio,
+          relativeRetentionPerformance,
+          startedWatching: index === 0 ? 800 : 0,
+          stoppedWatching: elapsedRatio > 0.17 && elapsedRatio <= 0.5 ? 5 : 1,
+          totalSegmentImpressions: 800
+        };
+      });
+      const context = {
+        productionId: 'retention-production',
+        contentFormat: 'long_form',
+        title: 'Scene retention fixture',
+        publishedAt: new Date(Date.now() - 8 * 86400000).toISOString(),
+        retentionDuration: 90,
+        retentionScenes: [
+          { id: 'scene-hook', position: 0, label: 'Hook', duration: 15 },
+          { id: 'scene-intro', position: 1, label: 'Introduction', duration: 30 },
+          { id: 'scene-demo', position: 2, label: 'Demonstration', duration: 45 }
+        ]
+      };
+      const snapshot = await learning.captureRetention({
+        available: true,
+        simulated: false,
+        videoId: 'retention-video-1',
+        title: context.title,
+        publishedAt: context.publishedAt,
+        durationSeconds: 90,
+        points
+      }, context, '7d', { views: 800, impressions: 12000 });
+
+      if (
+        !snapshot || snapshot.points.length !== 100 || snapshot.sceneMetrics.length !== 3 ||
+        snapshot.summary.primaryDropoff?.id !== 'scene-intro' || snapshot.confidence !== 'high'
+      ) {
+        throw new Error('The real retention curve was not mapped to the expected scene evidence');
+      }
+      const recommendation = (await db.listLearningRecommendations({ limit: 20 }))
+        .find(item => item.category === 'scene_retention');
+      if (!recommendation || recommendation.status !== 'pending' || recommendation.proposedChange.autoEditPublishedContent !== false) {
+        throw new Error('Scene retention learning bypassed pending review or published-content safety');
+      }
+      const approvedBeforeReview = await db.listLearningRecommendations({ status: 'approved', limit: 20 });
+      if (approvedBeforeReview.some(item => item.id === recommendation.id)) {
+        throw new Error('Pending scene retention learning entered autonomous planning');
+      }
+      await db.reviewLearningRecommendation(recommendation.id, 'approved');
+      const approvedAfterReview = await db.listLearningRecommendations({ status: 'approved', limit: 20 });
+      if (!approvedAfterReview.some(item => item.id === recommendation.id)) {
+        throw new Error('Approved scene retention learning was not made available to planning');
+      }
+
+      const skipped = await learning.captureRetention({
+        available: true,
+        simulated: true,
+        videoId: 'retention-simulated',
+        durationSeconds: 90,
+        points
+      }, context, '7d', { views: 1000 });
+      if (skipped !== null || (await db.listRetentionSnapshots({ limit: 10 })).length !== 1) {
+        throw new Error('Simulated retention evidence was persisted');
+      }
+
+      const clipped = db.buildRetentionSceneContext(context.retentionScenes, {
+        startSeconds: 10,
+        duration: 35,
+        sourceSceneIds: ['scene-hook', 'scene-intro']
+      });
+      if (clipped.length !== 2 || clipped[0].duration !== 5 || clipped[1].duration !== 30) {
+        throw new Error('Shorts retention context did not clip the source scene timeline correctly');
+      }
+
+      const analytics = new AnalyticsOptimizationAgent(db, { getYouTubeAuth: () => ({}) });
+      analytics.youtubeAnalytics = {
+        reports: {
+          query: async () => ({
+            data: {
+              columnHeaders: [
+                'elapsedVideoTimeRatio', 'audienceWatchRatio', 'relativeRetentionPerformance',
+                'startedWatching', 'stoppedWatching', 'totalSegmentImpressions'
+              ].map(name => ({ name })),
+              rows: [[0.01, 0.99, 0.7, 10, 1, 10]]
+            }
+          })
+        }
+      };
+      const apiCurve = await analytics.getAudienceRetention('fixture-video', null, 'PT2M30S');
+      if (!apiCurve.available || apiCurve.durationSeconds !== 150 || apiCurve.points[0].audienceWatchRatio !== 0.99) {
+        throw new Error('YouTube audience retention response was not normalized correctly');
+      }
+    } finally {
+      await db.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+
+    this.logger.info('Scene-Aware Retention Studio test completed successfully');
+  }
+
   async testProductionReadinessGate() {
     const fs = require('fs').promises;
     const os = require('os');
@@ -802,6 +930,416 @@ class SystemTest {
     this.logger.info('Durable multi-provider video generation test completed successfully');
   }
 
+  async testSceneRepairStudio() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const sharp = require('sharp');
+    const { SceneRepairService, buildInitialSceneManifest } = require('./utils/scene-repair-service');
+    const { OperatorService } = require('./utils/operator-service');
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-scene-repair-'));
+    const db = new Database();
+    db.dbPath = path.join(directory, 'scenes.db');
+    await db.initialize();
+
+    try {
+      const imagePath = path.join(directory, 'scene.png');
+      const oldVideoPath = path.join(directory, 'old.mp4');
+      const originalAudioPath = path.join(directory, 'original.mp3');
+      await sharp({ create: { width: 320, height: 180, channels: 3, background: '#203a5f' } }).png().toFile(imagePath);
+      await fs.writeFile(oldVideoPath, Buffer.from('previous final video'));
+      await fs.writeFile(originalAudioPath, Buffer.from('previous narration'));
+      const production = {
+        id: `prod_scene_${Date.now()}`,
+        status: 'ready',
+        script: {
+          title: 'Repair one scene',
+          fullScript: 'A complete factual-review-safe script for testing selective scene repair without replacing the entire production.',
+          hook: { text: 'Fix one weak moment without starting over.' },
+          introduction: { greeting: 'Hello.', topicIntro: 'Scene repair matters.', valueProposition: 'Save time and credits.' },
+          mainContent: { sections: [{ title: 'Selective repair', content: 'Keep the scenes that work and replace only the scene that does not.' }] },
+          conclusion: { recap: ['Preserve good work.'], finalThought: 'Review the repaired timeline.' }
+        },
+        seo: { title: 'Repair one scene', description: 'A detailed description of selective scene repair for video production workflows.', tags: ['video', 'repair', 'workflow'] },
+        strategy: { topic: 'Selective scene repair' },
+        assets: {
+          video: { visualAssets: [imagePath] },
+          audio: { path: originalAudioPath, status: 'ready', simulated: false, provider: 'fixture-tts', model: 'fixture-voice' },
+          thumbnail: { path: imagePath },
+          finalVideo: { path: oldVideoPath, simulated: false, duration: '1:00', provider: { actualProvider: 'slideshow' } }
+        },
+        timeline: { readyForUpload: new Date().toISOString() },
+        scheduledPublishTime: new Date(Date.now() + 86400000).toISOString(),
+        priority: 50,
+        estimatedDuration: '1:00'
+      };
+      await db.saveProductionData(production);
+      await db.saveProductionSnapshot(production);
+      await db.saveContentReview(production.id, { status: 'needs_review', editorData: {}, qualityChecks: [] });
+      await db.saveContentProvenance(production.id, {
+        sources: [], claims: [], containsSyntheticMedia: false, status: 'not_required',
+        summary: { sourceCount: 0, verifiedSources: 0, claimCount: 0, resolvedClaims: 0, highRiskClaims: 0, unresolvedClaims: 0 }
+      });
+
+      const manifest = buildInitialSceneManifest(production, { actualProvider: 'slideshow', model: 'local-ffmpeg' });
+      if (manifest.length < 3 || manifest.some(scene => scene.assetPath !== imagePath)) {
+        throw new Error('Initial scene manifest did not preserve the script structure and visual assets');
+      }
+      await db.replaceProductionScenes(production.id, manifest);
+      for (const scene of await db.listProductionScenes(production.id)) {
+        await db.updateProductionScene(production.id, scene.id, {
+          audioPath: originalAudioPath, narrationStatus: 'current',
+          narrationProvider: 'fixture-tts', narrationModel: 'fixture-voice'
+        });
+      }
+      const roundTrip = await db.listProductionScenes(production.id);
+      if (roundTrip.length !== manifest.length || roundTrip[0].scriptText !== manifest[0].scriptText) {
+        throw new Error('Scene manifest did not round-trip through SQLite');
+      }
+
+      const fakeProvider = {
+        id: 'seedance', model: 'seedance-test',
+        normalizeRequest: request => ({ ...request, duration: Math.min(4, Number(request.duration || 4)) })
+      };
+      const fakeGenerator = {
+        mediaGeneration: {
+          settings: async () => ({ provider: 'seedance', order: ['seedance'], clipDuration: 4, resolution: '720p', aspectRatio: '16:9' }),
+          registry: { select: () => fakeProvider, get: () => fakeProvider },
+          generateClip: async ({ outputPath }) => {
+            await fs.mkdir(path.dirname(outputPath), { recursive: true });
+            await fs.writeFile(outputPath, Buffer.from('generated scene video'));
+            return { outputPath, task: { model: fakeProvider.model, external_task_id: 'scene-task-1' } };
+          },
+          isValidVideo: async () => true
+        },
+        generateVisualAssets: async () => [imagePath],
+        async generateTTSAudio(_text, outputPath) {
+          await fs.writeFile(outputPath, Buffer.from('scene narration'));
+          this.lastNarrationResult = {
+            status: 'ready', path: outputPath, provider: 'fixture-tts', model: 'fixture-voice-v2',
+            externalTaskId: 'narration-task-1', generatedAt: new Date().toISOString(),
+            cost: { provider: 'fixture-tts', amount: null, invoiceRequired: true }
+          };
+          return outputPath;
+        },
+        isUsableAudioFile: async filePath => Boolean(filePath && await fs.stat(filePath).then(stat => stat.size > 0).catch(() => false)),
+        renderMediaTimeline: async (_segments, outputPath) => { await fs.writeFile(outputPath, Buffer.from('rebuilt visual timeline')); return outputPath; },
+        addAudioToVideo: async (videoPath, _audioPath, outputPath) => { await fs.copyFile(videoPath, outputPath); return outputPath; }
+      };
+      const service = new SceneRepairService(db, fakeGenerator, { dataRoot: directory, logger: this.logger });
+      service.rebuildNarration = async () => originalAudioPath;
+      const first = roundTrip[0];
+      const edited = await service.updateScene(production.id, first.id, {
+        scriptText: `${first.scriptText} Updated narration.`, prompt: `${first.prompt} Brighter composition.`, factualChange: false
+      });
+      if (edited.status !== 'visual_stale' || edited.narrationStatus !== 'stale' || edited.revision !== first.revision + 1) {
+        throw new Error('Scene edits did not invalidate only the scene rebuild and narration state');
+      }
+
+      const quality = await new OperatorService(db).runQualityChecks({ ...(await db.getProductionBundle(production.id)), scenes: await db.listProductionScenes(production.id) }, {});
+      if (quality.passed || !quality.blockingFailures.includes('scene_integrity')) {
+        throw new Error('Approval quality checks did not block an unrepaired scene');
+      }
+      const estimate = await service.regenerationEstimate(production.id, first.id);
+      if (!estimate.paid || estimate.provider !== 'seedance') throw new Error('Paid scene estimate did not expose provider billing risk');
+      let paidBlocked = false;
+      try {
+        await service.regenerate(production.id, first.id, { regenerateNarration: true });
+      } catch (error) {
+        paidBlocked = error.code === 'PAID_CONFIRMATION_REQUIRED';
+      }
+      if (!paidBlocked) throw new Error('Paid scene regeneration started without explicit confirmation');
+      const regenerated = await service.regenerate(production.id, first.id, { confirmPaid: true, regenerateNarration: true });
+      if (
+        regenerated.scene.status !== 'needs_rebuild' || regenerated.scene.externalTaskId !== 'scene-task-1' ||
+        regenerated.scene.narrationStatus !== 'current' || regenerated.scene.narrationProvider !== 'fixture-tts' ||
+        regenerated.scene.narrationTaskId !== 'narration-task-1'
+      ) {
+        throw new Error('Confirmed selective regeneration did not persist visual and narration evidence');
+      }
+
+      const second = roundTrip[1];
+      const replacement = await sharp({ create: { width: 320, height: 180, channels: 3, background: '#ad3d45' } }).png().toBuffer();
+      let rightsBlocked = false;
+      try {
+        await service.replaceAsset(production.id, second.id, { buffer: replacement, contentType: 'image/png', filename: 'replacement.png' });
+      } catch (error) {
+        rightsBlocked = error.code === 'RIGHTS_CONFIRMATION_REQUIRED';
+      }
+      if (!rightsBlocked) throw new Error('Uploaded scene asset bypassed rights confirmation');
+      const replaced = await service.replaceAsset(production.id, second.id, {
+        buffer: replacement, contentType: 'image/png', filename: 'replacement.png', rightsConfirmed: true
+      });
+      if (replaced.assetOrigin !== 'uploaded' || !replaced.rightsConfirmed || replaced.status !== 'needs_rebuild') {
+        throw new Error('Replacement asset evidence did not persist');
+      }
+
+      const ordered = await service.reorder(production.id, (await db.listProductionScenes(production.id)).map(scene => scene.id).reverse());
+      if (ordered[0].id === first.id) throw new Error('Scene timeline order did not persist');
+      const rebuilt = await service.rebuild(production.id);
+      const finalBundle = await db.getProductionBundle(production.id);
+      if (!rebuilt.finalVideo || finalBundle.assets.finalVideo.previousPath !== oldVideoPath || finalBundle.scenes.some(scene => scene.status !== 'ready')) {
+        throw new Error('Scene rebuild did not preserve the prior video and finalize every scene');
+      }
+      const revisions = await db.listProductionSceneRevisions(production.id);
+      for (const action of ['edit', 'regenerate', 'replace_asset', 'reorder', 'rebuild']) {
+        if (!revisions.some(revision => revision.action === action)) throw new Error(`Scene revision history is missing ${action}`);
+      }
+
+      const locked = await service.updateScene(production.id, ordered[0].id, { locked: true });
+      let lockBlocked = false;
+      try {
+        await service.updateScene(production.id, locked.id, { prompt: 'Unauthorized locked edit' });
+      } catch (error) {
+        lockBlocked = error.status === 409;
+      }
+      if (!lockBlocked) throw new Error('Locked scene accepted an edit');
+    } finally {
+      await db.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+    this.logger.info('Scene Repair Studio test completed successfully');
+  }
+
+  async testNarrationReliability() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const { SceneRepairService } = require('./utils/scene-repair-service');
+    const { OperatorService } = require('./utils/operator-service');
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-narration-'));
+    const db = new Database();
+    db.dbPath = path.join(directory, 'narration.db');
+    await db.initialize();
+
+    try {
+      const productionId = 'prod-narration-recovery';
+      const visualPath = path.join(directory, 'scene.png');
+      const videoPath = path.join(directory, 'video.mp4');
+      await fs.writeFile(visualPath, Buffer.from('visual'));
+      await fs.writeFile(videoPath, Buffer.from('video'));
+      const production = {
+        id: productionId, status: 'ready',
+        strategy: { topic: 'Narration recovery' },
+        script: {
+          title: 'Narration recovery',
+          fullScript: 'A complete script that demonstrates reliable narration recovery and explicit operator controls.'.repeat(4)
+        },
+        seo: {
+          title: 'Narration recovery',
+          description: 'A detailed explanation of reliable narration recovery for production workflows.',
+          tags: ['narration', 'recovery', 'workflow']
+        },
+        assets: {
+          audio: { path: path.join(directory, 'missing.mp3.info'), status: 'unavailable', simulated: true, error: 'Provider quota exhausted' },
+          finalVideo: { path: videoPath, simulated: false }, thumbnail: { path: visualPath }
+        },
+        timeline: {}, priority: 50, scheduledPublishTime: new Date(Date.now() + 86400000).toISOString()
+      };
+      await db.saveProductionData(production);
+      await db.saveProductionSnapshot(production);
+      await db.replaceProductionScenes(productionId, [{
+        id: 'scene-narration-1', label: 'Opening', scriptText: 'This narration must be recovered.',
+        prompt: 'Opening visual', duration: 8, assetType: 'image', assetOrigin: 'generated', assetPath: visualPath,
+        status: 'ready', narrationStatus: 'unavailable', narrationError: 'Provider quota exhausted', rightsConfirmed: true
+      }]);
+
+      const blockedQuality = await new OperatorService(db).runQualityChecks({
+        ...production, scenes: await db.listProductionScenes(productionId)
+      }, {});
+      if (blockedQuality.passed || !blockedQuality.blockingFailures.includes('narration')) {
+        throw new Error('Missing narration did not block production quality');
+      }
+
+      let failProvider = true;
+      const generator = {
+        async generateTTSAudio(_text, outputPath) {
+          if (failProvider) {
+            this.lastNarrationResult = {
+              status: 'failed', provider: 'openai', model: 'gpt-4o-mini-tts',
+              generatedAt: new Date().toISOString(), error: 'Provider quota exhausted',
+              cost: { provider: 'openai', amount: null, invoiceRequired: true }
+            };
+            throw new Error('Provider quota exhausted');
+          }
+          await fs.writeFile(outputPath, Buffer.from('recovered narration'));
+          this.lastNarrationResult = {
+            status: 'ready', path: outputPath, provider: 'openai', model: 'gpt-4o-mini-tts',
+            externalTaskId: 'tts-task-1', generatedAt: new Date().toISOString(),
+            cost: { provider: 'openai', amount: null, invoiceRequired: true }
+          };
+          return outputPath;
+        },
+        isUsableAudioFile: async filePath => Boolean(filePath && await fs.stat(filePath).then(stat => stat.size > 0).catch(() => false))
+      };
+      const service = new SceneRepairService(db, generator, { dataRoot: directory, logger: this.logger });
+
+      let confirmationBlocked = false;
+      try {
+        await service.regenerateNarration(productionId, 'scene-narration-1');
+      } catch (error) {
+        confirmationBlocked = error.code === 'NARRATION_COST_CONFIRMATION_REQUIRED';
+      }
+      if (!confirmationBlocked) throw new Error('Narration regeneration bypassed the provider-cost confirmation');
+
+      let outagePersisted = false;
+      try {
+        await service.regenerateNarration(productionId, 'scene-narration-1', { confirmCost: true });
+      } catch (_error) {
+        const failed = await db.getProductionScene(productionId, 'scene-narration-1');
+        outagePersisted = failed.narrationStatus === 'failed' && failed.narrationProvider === 'openai' && /quota/.test(failed.narrationError);
+      }
+      if (!outagePersisted) throw new Error('Narration provider failure evidence was not persisted');
+
+      failProvider = false;
+      const recovered = await service.regenerateNarration(productionId, 'scene-narration-1', { confirmCost: true });
+      if (
+        recovered.narrationStatus !== 'current' || recovered.narrationProvider !== 'openai' ||
+        recovered.narrationModel !== 'gpt-4o-mini-tts' || recovered.narrationTaskId !== 'tts-task-1' ||
+        recovered.status !== 'needs_rebuild'
+      ) {
+        throw new Error('Narration-only recovery did not preserve provider evidence and rebuild state');
+      }
+
+      let weakSilenceBlocked = false;
+      try {
+        await service.setSilenceOverride(productionId, { enabled: true, confirmed: true, reason: 'silent' });
+      } catch (error) {
+        weakSilenceBlocked = /at least 10/.test(error.message);
+      }
+      if (!weakSilenceBlocked) throw new Error('Intentional silence was accepted without a meaningful reason');
+
+      await service.setSilenceOverride(productionId, {
+        enabled: true, confirmed: true, reason: 'This visual demonstration intentionally uses captions only.'
+      });
+      const silenceBundle = await db.getProductionBundle(productionId);
+      const silenceQuality = await new OperatorService(db).runQualityChecks(silenceBundle, {});
+      const narrationCheck = silenceQuality.checks.find(check => check.id === 'narration');
+      if (!narrationCheck?.passed || silenceBundle.scenes[0].narrationStatus !== 'intentional_silence') {
+        throw new Error('Confirmed intentional silence did not satisfy the narration evidence gate');
+      }
+
+      const revisions = await db.listProductionSceneRevisions(productionId);
+      for (const action of ['regenerate_narration', 'confirm_intentional_silence']) {
+        if (!revisions.some(revision => revision.action === action)) throw new Error(`Narration history is missing ${action}`);
+      }
+    } finally {
+      await db.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+    this.logger.info('Narration reliability and recovery test completed successfully');
+  }
+
+  async testShortsRepurposingStudio() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const { runFFmpeg } = require('./utils/ffmpeg');
+    const { ShortsRepurposingService } = require('./utils/shorts-repurposing-service');
+    const { PublishingSchedulingAgent } = require('./agents/publishing-scheduling-agent');
+    const { ChannelLearningEngine } = require('./utils/channel-learning-engine');
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-shorts-'));
+    const db = new Database();
+    db.dbPath = path.join(directory, 'shorts.db');
+    await db.initialize();
+
+    try {
+      const productionId = 'prod-shorts-studio';
+      const sourceVideo = path.join(directory, 'source.mp4');
+      const audioPath = path.join(directory, 'narration.m4a');
+      const thumbnailPath = path.join(directory, 'thumbnail.jpg');
+      await runFFmpeg([
+        '-y', '-f', 'lavfi', '-i', 'color=c=#203a5f:s=640x360:r=24:d=4',
+        '-f', 'lavfi', '-i', 'sine=frequency=440:duration=4',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', sourceVideo
+      ]);
+      await fs.writeFile(audioPath, Buffer.from('narration evidence'));
+      await fs.writeFile(thumbnailPath, Buffer.from('thumbnail evidence'));
+      const production = {
+        id: productionId, status: 'scheduled',
+        strategy: { topic: 'Repurpose one production', contentType: 'tutorial' },
+        script: { title: 'Repurpose one production', fullScript: 'A complete source script for producing several useful vertical excerpts from one approved production.'.repeat(4) },
+        seo: {
+          title: 'Repurpose one production',
+          description: 'A detailed source description for a safe and efficient vertical repurposing workflow.',
+          tags: ['repurposing', 'shorts', 'workflow']
+        },
+        assets: {
+          finalVideo: { path: sourceVideo, simulated: false, duration: 4 },
+          audio: { path: audioPath, status: 'ready', simulated: false, provider: 'fixture-tts' },
+          thumbnail: { path: thumbnailPath }
+        },
+        timeline: {}, priority: 50,
+        scheduledPublishTime: new Date(Date.now() + 86400000).toISOString()
+      };
+      await db.saveProductionData(production);
+      await db.saveProductionSnapshot(production);
+      await db.saveContentReview(productionId, {
+        status: 'approved', editorData: { factChecked: true, rightsConfirmed: true },
+        qualityChecks: [], reviewedAt: new Date().toISOString()
+      });
+      await db.saveContentProvenance(productionId, {
+        sources: [], claims: [], containsSyntheticMedia: true, status: 'not_required',
+        summary: { sourceCount: 0, verifiedSources: 0, claimCount: 0, resolvedClaims: 0, highRiskClaims: 0, unresolvedClaims: 0 }
+      });
+      await db.replaceProductionScenes(productionId, [
+        { id: 'short-source-1', label: 'Hook', scriptText: 'One strong idea can reach more than one audience.', prompt: 'Opening', duration: 1.4, assetType: 'video', assetPath: sourceVideo, audioPath, status: 'ready', narrationStatus: 'current', rightsConfirmed: true },
+        { id: 'short-source-2', label: 'Method', scriptText: 'Use the approved scene evidence to build a vertical excerpt.', prompt: 'Method', duration: 1.3, assetType: 'video', assetPath: sourceVideo, audioPath, status: 'ready', narrationStatus: 'current', rightsConfirmed: true },
+        { id: 'short-source-3', label: 'Result', scriptText: 'Render locally and review every Short before it reaches the schedule.', prompt: 'Result', duration: 1.3, assetType: 'video', assetPath: sourceVideo, audioPath, status: 'ready', narrationStatus: 'current', rightsConfirmed: true }
+      ]);
+
+      const publishing = new PublishingSchedulingAgent(db, {});
+      const service = new ShortsRepurposingService(db, publishing, {
+        dataRoot: path.join(directory, 'shorts'), width: 360, height: 640, logger: this.logger
+      });
+      const proposed = await service.propose(productionId, { count: 3 });
+      if (proposed.length !== 3 || proposed.some(clip => !clip.sourceSceneIds.length || clip.status !== 'proposed')) {
+        throw new Error('Short drafts did not preserve source-scene identity');
+      }
+      const edited = await service.update(productionId, proposed[0].id, {
+        title: 'One approved video, three vertical moments', layout: 'blur',
+        tags: ['Shorts', 'repurposing', 'workflow']
+      });
+      if (edited.title.length > 100 || edited.layout !== 'blur') throw new Error('Short draft edits did not persist');
+      const rendered = await service.render(productionId, edited.id);
+      if (rendered.status !== 'rendered' || !rendered.outputPath || !rendered.captionsPath) {
+        throw new Error('Local vertical rendering did not persist its MP4 and captions');
+      }
+      await runFFmpeg(['-v', 'error', '-i', rendered.outputPath, '-f', 'null', '-']);
+
+      let approvalBlocked = false;
+      try {
+        await service.approve(productionId, rendered.id, {});
+      } catch (error) {
+        approvalBlocked = error.code === 'SHORT_APPROVAL_REQUIRED';
+      }
+      if (!approvalBlocked) throw new Error('Short scheduling bypassed explicit approval confirmation');
+      const scheduled = await service.approve(productionId, rendered.id, {
+        confirmed: true, publishTime: new Date(Date.now() + 172800000).toISOString(), privacyStatus: 'private'
+      });
+      const schedule = await db.getLatestScheduleEntry(rendered.id);
+      if (
+        scheduled.status !== 'scheduled' || !schedule || schedule.metadata.contentType !== 'short' ||
+        schedule.metadata.sourceProductionId !== productionId || schedule.metadata.containsSyntheticMedia !== true
+      ) {
+        throw new Error('Approved Short did not inherit evidence into an independent schedule entry');
+      }
+      schedule.status = 'published';
+      schedule.youtubeId = 'youtube-short-1';
+      schedule.youtubeUrl = 'https://www.youtube.com/shorts/youtube-short-1';
+      schedule.publishedAt = new Date().toISOString();
+      await db.updateScheduleEntry(schedule);
+      await publishing.syncShortStatus(schedule, 'published');
+      const published = await db.getShortClip(rendered.id);
+      const context = await db.getPublishedContentContext('youtube-short-1');
+      const attributes = new ChannelLearningEngine(db).extractAttributes({ videoDetails: { title: published.title } }, context);
+      if (published.status !== 'published' || context.contentFormat !== 'short' || attributes.surface !== 'shorts' || attributes.format !== 'shorts') {
+        throw new Error('Published Short did not remain separate in analytics learning context');
+      }
+    } finally {
+      await db.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+    this.logger.info('Shorts Repurposing Studio test completed successfully');
+  }
+
   async testProvenanceDesk() {
     const fs = require('fs').promises;
     const os = require('os');
@@ -814,13 +1352,15 @@ class SystemTest {
     await db.initialize();
     const productionId = 'prod-provenance-test';
     const videoPath = path.join(directory, 'video.mp4');
+    const audioPath = path.join(directory, 'narration.mp3');
     await fs.writeFile(videoPath, Buffer.from('test-video'));
+    await fs.writeFile(audioPath, Buffer.from('test-audio'));
 
     try {
       await db.saveProductionData({
         id: productionId,
         status: 'needs_review',
-        assets: { finalVideo: { path: videoPath, simulated: false } },
+        assets: { finalVideo: { path: videoPath, simulated: false }, audio: { path: audioPath, status: 'ready', simulated: false, provider: 'fixture-tts' } },
         timeline: {}, scheduledPublishTime: new Date(Date.now() + 86400000).toISOString(),
         priority: 50, estimatedDuration: '1:00'
       });
@@ -849,7 +1389,7 @@ class SystemTest {
           description: 'A detailed description of an evidence-aware automation workflow for careful channel operators.',
           tags: ['automation', 'evidence', 'workflow']
         },
-        assets: { finalVideo: { path: videoPath, simulated: false } }
+        assets: { finalVideo: { path: videoPath, simulated: false }, audio: { path: audioPath, status: 'ready', simulated: false, provider: 'fixture-tts' } }
       };
       await db.saveProductionSnapshot(production);
 
@@ -1177,13 +1717,18 @@ class SystemTest {
 
   async testPublishingSafety() {
     const { PublishingSchedulingAgent } = require('./agents/publishing-scheduling-agent');
+    const intentionalAudio = {
+      intentionalSilence: true,
+      silenceReason: 'This test fixture is intentionally silent.',
+      silenceConfirmedAt: new Date().toISOString()
+    };
     const agent = new PublishingSchedulingAgent({
       updateScheduleEntry: async () => {}
     }, {});
 
     agent.publishQueue = [
-      { productionId: 'prod-a', title: 'A', status: 'scheduled', metadata: {} },
-      { productionId: 'prod-b', title: 'B', status: 'scheduled', metadata: {} }
+      { productionId: 'prod-a', title: 'A', status: 'scheduled', metadata: { audio: intentionalAudio } },
+      { productionId: 'prod-b', title: 'B', status: 'scheduled', metadata: { audio: intentionalAudio } }
     ];
     agent.uploadToYouTube = async () => ({ id: 'youtube-1' });
 
@@ -1192,6 +1737,17 @@ class SystemTest {
     if (agent.publishQueue.length !== 1 || agent.publishQueue[0].productionId !== 'prod-b') {
       throw new Error('publishContent removed the wrong publish queue entries');
     }
+
+    const missingNarration = new PublishingSchedulingAgent({ updateScheduleEntry: async () => {} }, {});
+    missingNarration.publishQueue = [{ productionId: 'prod-no-audio', status: 'scheduled', metadata: {} }];
+    missingNarration.uploadToYouTube = async () => { throw new Error('Upload must not start without narration'); };
+    let narrationPublishBlocked = false;
+    try {
+      await missingNarration.publishContent('prod-no-audio');
+    } catch (error) {
+      narrationPublishBlocked = error.code === 'NARRATION_REQUIRED';
+    }
+    if (!narrationPublishBlocked) throw new Error('Publishing accepted a production without narration evidence');
 
     let missingFileRejected = false;
     try {
@@ -1209,7 +1765,7 @@ class SystemTest {
       updateScheduleEntry: async entry => uncertainUpdates.push({ ...entry })
     }, {});
     uncertain.publishQueue = [
-      { id: 'schedule-uncertain', productionId: 'prod-uncertain', title: 'Uncertain', status: 'scheduled', metadata: {} }
+      { id: 'schedule-uncertain', productionId: 'prod-uncertain', title: 'Uncertain', status: 'scheduled', metadata: { audio: intentionalAudio } }
     ];
     let uploadAttempts = 0;
     uncertain.uploadToYouTube = async entry => {
@@ -1237,7 +1793,7 @@ class SystemTest {
     let reconciliationCalls = 0;
     const recorded = {
       id: 'schedule-recorded', productionId: 'prod-recorded', title: 'Recorded', status: 'uploaded',
-      youtubeId: 'youtube-existing', metadata: {}
+      youtubeId: 'youtube-existing', metadata: { audio: intentionalAudio }
     };
     const reconcile = new PublishingSchedulingAgent({
       getLatestScheduleEntry: async () => recorded,
@@ -1437,12 +1993,26 @@ class SystemTest {
       throw new Error('Production without a final video was scheduled for publishing');
     }
 
+    const missingNarration = await agent.scheduleContent({
+      id: 'prod-no-narration', script: { title: 'No narration' }, priority: 50,
+      scheduledPublishTime: new Date().toISOString(),
+      assets: { finalVideo: { path: 'video.mp4' } }, seo: {}
+    });
+    if (missingNarration !== null) throw new Error('Production without narration was scheduled for publishing');
+
     const real = await agent.scheduleContent({
       id: 'prod-real',
       script: { title: 'Real' },
       priority: 50,
       scheduledPublishTime: new Date().toISOString(),
-      assets: { finalVideo: { path: 'video.mp4' }, thumbnail: {}, captions: {} },
+      assets: {
+        finalVideo: { path: 'video.mp4' }, thumbnail: {}, captions: {},
+        audio: {
+          intentionalSilence: true,
+          silenceReason: 'This fixture intentionally uses a silent timeline.',
+          silenceConfirmedAt: new Date().toISOString()
+        }
+      },
       seo: {}
     });
     if (!real || agent.publishQueue.length !== 1) {
@@ -1555,12 +2125,19 @@ class SystemTest {
         throw new Error('Rendered slideshow video is empty');
       }
 
-      // Silent fallback: an unusable audio path must still yield a playable output
+      // Missing narration must fail closed unless the operator explicitly confirmed silence.
       const finalPath = path.join(dir, 'final.mp4');
-      await generator.addAudioToVideo(videoPath, path.join(dir, 'missing.mp3'), finalPath);
+      let missingNarrationBlocked = false;
+      try {
+        await generator.addAudioToVideo(videoPath, path.join(dir, 'missing.mp3'), finalPath);
+      } catch (error) {
+        missingNarrationBlocked = error.code === 'NARRATION_REQUIRED';
+      }
+      if (!missingNarrationBlocked) throw new Error('Missing narration silently produced a final video');
+      await generator.addAudioToVideo(videoPath, path.join(dir, 'missing.mp3'), finalPath, { allowSilent: true });
       const finalStats = await fs.stat(finalPath);
       if (!finalStats.size) {
-        throw new Error('Silent-audio fallback did not produce a video');
+        throw new Error('Explicit intentional-silence assembly did not produce a video');
       }
 
       const hybridPath = path.join(dir, 'hybrid.mp4');

@@ -53,6 +53,10 @@ class PublishingSchedulingAgent {
         this.logger.warn(`Not scheduling ${productionData.id}: no real video file was produced (placeholder/simulated output). Fix your AI provider keys and FFmpeg, then regenerate.`);
         return null;
       }
+      if (!await this.isNarrationReady(productionData.assets?.audio)) {
+        this.logger.warn(`Not scheduling ${productionData.id}: narration is missing. Regenerate narration or explicitly confirm an intentional silent video.`);
+        return null;
+      }
 
       this.logger.info(`Scheduling content: ${productionData.id}`);
       const existing = await this.db.getLatestScheduleEntry?.(productionData.id);
@@ -75,9 +79,13 @@ class PublishingSchedulingAgent {
           seo: productionData.seo,
           thumbnail: productionData.assets.thumbnail,
           video: productionData.assets.finalVideo,
+          audio: productionData.assets.audio,
           captions: productionData.assets.captions,
           privacyStatus: productionData.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private',
-          containsSyntheticMedia: productionData.containsSyntheticMedia === true
+          containsSyntheticMedia: productionData.containsSyntheticMedia === true,
+          contentType: productionData.contentType || 'long_form',
+          sourceProductionId: productionData.sourceProductionId || productionData.id,
+          shortClipId: productionData.shortClipId || null
         },
         createdAt: new Date().toISOString()
       };
@@ -96,6 +104,7 @@ class PublishingSchedulingAgent {
 
   async publishContent(contentId) {
     try {
+      let productionBundle = null;
       if (this.db.getLatestReadinessRun) {
         const readiness = await this.db.getLatestReadinessRun();
         if (readiness?.status === 'failed') {
@@ -109,8 +118,8 @@ class PublishingSchedulingAgent {
         }
       }
       if (this.db.getProductionBundle) {
-        const bundle = await this.db.getProductionBundle(contentId);
-        if (bundle && !['verified', 'not_required'].includes(bundle.provenance?.status || 'not_required')) {
+        productionBundle = await this.db.getProductionBundle(contentId);
+        if (productionBundle && !['verified', 'not_required'].includes(productionBundle.provenance?.status || 'not_required')) {
           const error = new Error('Publishing is blocked until every factual claim is supported or explicitly waived');
           error.status = 409;
           error.code = 'PROVENANCE_BLOCKED';
@@ -130,6 +139,12 @@ class PublishingSchedulingAgent {
         throw new Error(`Content not found in queue: ${contentId}`);
       }
       if (scheduleEntry.status === 'published') return scheduleEntry;
+      if (!await this.isNarrationReady(scheduleEntry.metadata?.audio || productionBundle?.assets?.audio)) {
+        const error = new Error('Publishing is blocked because narration is missing or the intentional-silence override is incomplete');
+        error.status = 409;
+        error.code = 'NARRATION_REQUIRED';
+        throw error;
+      }
       if (scheduleEntry.youtubeId) {
         return this.reconcileUploadedVideo(scheduleEntry);
       }
@@ -143,6 +158,7 @@ class PublishingSchedulingAgent {
       scheduleEntry.status = 'uploading';
       scheduleEntry.error = null;
       await this.db.updateScheduleEntry(scheduleEntry);
+      await this.syncShortStatus(scheduleEntry, 'uploading');
       
       let uploadResult;
       try {
@@ -152,12 +168,14 @@ class PublishingSchedulingAgent {
           scheduleEntry.status = 'reconciliation_required';
           scheduleEntry.error = 'Upload outcome is unknown; verify the YouTube channel before retrying';
           await this.db.updateScheduleEntry(scheduleEntry);
+          await this.syncShortStatus(scheduleEntry, 'reconciliation_required', scheduleEntry.error);
           error.code = 'UPLOAD_OUTCOME_UNKNOWN';
           error.status = 409;
         } else {
           scheduleEntry.status = 'failed';
           scheduleEntry.error = error.message;
           await this.db.updateScheduleEntry(scheduleEntry);
+          await this.syncShortStatus(scheduleEntry, 'failed', error.message);
         }
         throw error;
       }
@@ -173,6 +191,7 @@ class PublishingSchedulingAgent {
       }
 
       await this.db.updateScheduleEntry(scheduleEntry);
+      await this.syncShortStatus(scheduleEntry, 'published');
 
       // Remove from queue
       this.publishQueue = this.publishQueue.filter(entry => entry.productionId !== scheduleEntry.productionId);
@@ -281,6 +300,19 @@ class PublishingSchedulingAgent {
     return { ...videoUpload.data, warnings };
   }
 
+  async isNarrationReady(audio = {}) {
+    if (audio.intentionalSilence === true) {
+      return String(audio.silenceReason || '').trim().length >= 10 && Boolean(audio.silenceConfirmedAt);
+    }
+    if (!audio.path || audio.simulated || String(audio.path).endsWith('.info')) return false;
+    try {
+      const stats = await fs.stat(audio.path);
+      return stats.isFile() && stats.size > 0;
+    } catch (_error) {
+      return false;
+    }
+  }
+
   isUploadOutcomeUnknown(error) {
     const status = Number(error.status || error.response?.status || 0);
     return !status || status >= 500;
@@ -292,6 +324,7 @@ class PublishingSchedulingAgent {
       scheduleEntry.status = 'reconciliation_required';
       scheduleEntry.error = 'The recorded YouTube video ID could not be verified';
       await this.db.updateScheduleEntry(scheduleEntry);
+      await this.syncShortStatus(scheduleEntry, 'reconciliation_required', scheduleEntry.error);
       const error = new Error('The recorded upload could not be verified on YouTube. Resolve it before attempting another upload.');
       error.status = 409;
       error.code = 'UPLOAD_OUTCOME_UNKNOWN';
@@ -302,9 +335,22 @@ class PublishingSchedulingAgent {
     scheduleEntry.youtubeUrl = scheduleEntry.youtubeUrl || `https://www.youtube.com/watch?v=${scheduleEntry.youtubeId}`;
     scheduleEntry.error = null;
     await this.db.updateScheduleEntry(scheduleEntry);
+    await this.syncShortStatus(scheduleEntry, 'published');
     this.publishQueue = this.publishQueue.filter(entry => entry.productionId !== scheduleEntry.productionId);
     this.logger.success(`Reconciled existing YouTube upload: ${scheduleEntry.youtubeUrl}`);
     return scheduleEntry;
+  }
+
+  async syncShortStatus(scheduleEntry, status, error = null) {
+    const clipId = scheduleEntry.metadata?.shortClipId;
+    if (!clipId || !this.db.updateShortClip) return null;
+    return this.db.updateShortClip(clipId, {
+      status,
+      scheduleId: scheduleEntry.id,
+      youtubeId: scheduleEntry.youtubeId || null,
+      youtubeUrl: scheduleEntry.youtubeUrl || null,
+      error
+    });
   }
 
   async getVideoStream(videoPath) {

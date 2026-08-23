@@ -15,6 +15,7 @@ class AIVideoGenerator {
     const resolvedCredentials = credentials?.credentials || credentials || {};
     this.db = options.db || null;
     this.lastVideoResult = null;
+    this.lastNarrationResult = null;
     
     // Initialize AI services with graceful fallback
     const openaiKey = resolvedCredentials.openai?.apiKey || process.env.OPENAI_API_KEY;
@@ -49,6 +50,7 @@ class AIVideoGenerator {
     // ElevenLabs configuration
     this.elevenLabsApiKey = resolvedCredentials.elevenLabs?.apiKey || process.env.ELEVENLABS_API_KEY;
     this.elevenLabsVoiceId = resolvedCredentials.elevenLabs?.voiceId || process.env.ELEVENLABS_VOICE_ID;
+    this.elevenLabsModel = process.env.ELEVENLABS_TTS_MODEL || 'eleven_v3';
     
     // Azure Speech configuration
     this.azureSpeechKey = resolvedCredentials.azure?.speechKey || process.env.AZURE_SPEECH_KEY;
@@ -60,26 +62,46 @@ class AIVideoGenerator {
 
   async generateTTSAudio(text, outputPath) {
     this.logger.info('Generating TTS audio...');
-    
+    this.lastNarrationResult = null;
+    let provider = 'simulation';
+    let model = null;
+
     try {
-      // Try ElevenLabs first (higher quality)
+      let generatedPath;
       if (this.elevenLabsApiKey && this.elevenLabsVoiceId) {
-        return await this.generateElevenLabsTTS(text, outputPath);
-      }
-      
-      // Fallback to OpenAI TTS
-      if (this.openai) {
-        return await this.generateOpenAITTS(text, outputPath);
+        provider = 'elevenlabs';
+        model = this.elevenLabsModel;
+        generatedPath = await this.generateElevenLabsTTS(text, outputPath);
+      } else if (this.openai) {
+        provider = 'openai';
+        model = 'gpt-4o-mini-tts';
+        generatedPath = await this.generateOpenAITTS(text, outputPath);
+      } else if (this.gemini) {
+        provider = 'gemini';
+        model = process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
+        generatedPath = await this.generateGeminiTTS(text, outputPath);
+      } else {
+        generatedPath = await this.simulateTTSGeneration(text, outputPath);
       }
 
-      // Fallback to Gemini native TTS (free tier)
-      if (this.gemini) {
-        return await this.generateGeminiTTS(text, outputPath);
-      }
-
-      // Final fallback to simulation
-      return await this.simulateTTSGeneration(text, outputPath);
+      const usable = await this.isUsableAudioFile(generatedPath);
+      this.lastNarrationResult = {
+        status: usable ? 'ready' : 'unavailable',
+        path: generatedPath,
+        provider,
+        model,
+        externalTaskId: null,
+        generatedAt: new Date().toISOString(),
+        simulated: !usable,
+        cost: { provider, amount: null, currency: null, invoiceRequired: provider !== 'simulation' }
+      };
+      return generatedPath;
     } catch (error) {
+      this.lastNarrationResult = {
+        status: 'failed', path: null, provider, model, externalTaskId: null,
+        generatedAt: new Date().toISOString(), simulated: false, error: error.message,
+        cost: { provider, amount: null, currency: null, invoiceRequired: provider !== 'simulation' }
+      };
       this.logger.error('TTS generation failed:', error);
       throw error;
     }
@@ -90,7 +112,7 @@ class AIVideoGenerator {
     
     const data = {
       text: text,
-      model_id: "eleven_v3",
+      model_id: this.elevenLabsModel,
       voice_settings: {
         stability: 0.5,
         similarity_boost: 0.8,
@@ -301,14 +323,18 @@ class AIVideoGenerator {
             model: generated.model,
             mode: generated.settings.mode,
             generatedSeconds: generated.clips.reduce((total, clip) => total + clip.duration, 0),
-            tasks: generated.clips.map(clip => ({ scene: clip.index, taskId: clip.taskId, provider: clip.provider, model: clip.model }))
+            tasks: generated.clips.map(clip => ({ scene: clip.index, taskId: clip.taskId, provider: clip.provider, model: clip.model })),
+            scenes: generated.clips.map(clip => ({
+              index: clip.index, label: clip.label, prompt: clip.prompt, duration: clip.duration,
+              path: clip.path, taskId: clip.taskId, provider: clip.provider, model: clip.model
+            }))
           };
           return produced;
         }
       }
 
       const produced = await this.generateSlideshowVideo(script, visualAssets, audioPath, outputPath);
-      this.lastVideoResult = { requestedProvider: 'slideshow', actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'slideshow', generatedSeconds: 0, tasks: [] };
+      this.lastVideoResult = { requestedProvider: 'slideshow', actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'slideshow', generatedSeconds: 0, tasks: [], scenes: [] };
       return produced;
     } catch (error) {
       // The Logger's console line only shows the message string, so put the real
@@ -321,7 +347,7 @@ class AIVideoGenerator {
         this.lastVideoResult = {
           requestedProvider: this.lastVideoResult?.requestedProvider || 'configured-provider',
           actualProvider: 'slideshow', model: 'local-ffmpeg', mode: 'fallback', generatedSeconds: 0,
-          fallbackReason: reason, tasks: []
+          fallbackReason: reason, tasks: [], scenes: []
         };
         return produced;
       } catch (fallbackError) {
@@ -329,7 +355,7 @@ class AIVideoGenerator {
         const produced = await this.simulateVideoGeneration(script, visualAssets, audioPath, outputPath);
         this.lastVideoResult = {
           requestedProvider: 'configured-provider', actualProvider: 'simulation', model: null,
-          mode: 'simulation', generatedSeconds: 0, fallbackReason: `${reason}; ${fallbackError.message}`, tasks: []
+          mode: 'simulation', generatedSeconds: 0, fallbackReason: `${reason}; ${fallbackError.message}`, tasks: [], scenes: []
         };
         return produced;
       }
@@ -359,7 +385,7 @@ class AIVideoGenerator {
     const args = ['-y'];
     for (const segment of segments) {
       if (segment.type === 'image') args.push('-loop', '1', '-t', Number(segment.duration).toFixed(2), '-framerate', '30', '-i', segment.path);
-      else args.push('-i', segment.path);
+      else args.push('-stream_loop', '-1', '-i', segment.path);
     }
     const filters = segments.map((segment, index) =>
       `[${index}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,format=yuv420p,trim=duration=${Number(segment.duration).toFixed(2)},setpts=PTS-STARTPTS[v${index}]`
@@ -709,11 +735,14 @@ class AIVideoGenerator {
     const hasRealAudio = await this.isUsableAudioFile(audioPath);
 
     if (!hasRealAudio) {
-      this.logger.warn('No narration audio available — producing silent video. Configure OpenAI, ElevenLabs, or Azure Speech for narration.');
-      if (videoPath !== outputPath) {
-        await fs.copyFile(videoPath, outputPath);
+      if (options.allowSilent === true) {
+        this.logger.warn('Creating an intentionally silent video from an operator-confirmed override.');
+        if (videoPath !== outputPath) await fs.copyFile(videoPath, outputPath);
+        return outputPath;
       }
-      return outputPath;
+      const error = new Error('Narration audio is required. Regenerate narration or explicitly confirm an intentional silent video.');
+      error.code = 'NARRATION_REQUIRED';
+      throw error;
     }
 
     // FFmpeg cannot write to its own input, so mux to a temp file when paths collide

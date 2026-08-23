@@ -41,7 +41,41 @@ class Database {
       // readiness_runs, content_provenance, ...) after some databases had already
       // reached v1. Every statement in it is CREATE TABLE IF NOT EXISTS, so
       // re-running it here is a safe, idempotent way to backfill those tables.
-      /* v2 */ async () => { await this.createTables(); }
+      /* v2 */ async () => { await this.createTables(); },
+      // publish_schedule originally had a FOREIGN KEY (production_id) REFERENCES
+      // productions(id), but Shorts schedule entries store the short clip's own
+      // id there, which never gets a `productions` row — only the parent video
+      // does. Under better-sqlite3 (unlike the old sqlite3 driver) foreign keys
+      // are enforced by default, so that insert now fails outright. Rebuild the
+      // table without the constraint for anyone who already reached v1/v2.
+      /* v3 */ async () => {
+        const hasForeignKey = this.db.pragma('foreign_key_list(publish_schedule)').length > 0;
+        if (!hasForeignKey) return;
+        this.db.pragma('foreign_keys = OFF');
+        try {
+          this.db.exec(`
+            CREATE TABLE publish_schedule_new (
+              id TEXT PRIMARY KEY,
+              production_id TEXT NOT NULL,
+              title TEXT NOT NULL,
+              publish_time TEXT NOT NULL,
+              status TEXT DEFAULT 'scheduled',
+              priority INTEGER DEFAULT 50,
+              metadata TEXT,
+              youtube_id TEXT,
+              youtube_url TEXT,
+              published_at TEXT,
+              error_message TEXT,
+              created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            INSERT INTO publish_schedule_new SELECT * FROM publish_schedule;
+            DROP TABLE publish_schedule;
+            ALTER TABLE publish_schedule_new RENAME TO publish_schedule;
+          `);
+        } finally {
+          this.db.pragma('foreign_keys = ON');
+        }
+      }
     ];
 
     for (; version < migrations.length; version++) {
@@ -135,7 +169,10 @@ class Database {
         FOREIGN KEY (seo_id) REFERENCES seo_data(id)
       )`,
       
-      // Publishing Schedule
+      // Publishing Schedule. No FK on production_id: Shorts (see
+      // shorts-repurposing-service.js) schedule entries use the short clip's
+      // own id here, which never gets its own row in `productions` — only its
+      // parent video does.
       `CREATE TABLE IF NOT EXISTS publish_schedule (
         id TEXT PRIMARY KEY,
         production_id TEXT NOT NULL,
@@ -148,8 +185,7 @@ class Database {
         youtube_url TEXT,
         published_at TEXT,
         error_message TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (production_id) REFERENCES productions(id)
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`,
       
       // Analytics Reports
@@ -196,6 +232,23 @@ class Database {
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         reviewed_at TEXT
+      )`,
+      `CREATE TABLE IF NOT EXISTS retention_snapshots (
+        id TEXT PRIMARY KEY,
+        video_id TEXT NOT NULL,
+        production_id TEXT,
+        short_clip_id TEXT,
+        title TEXT,
+        surface TEXT NOT NULL DEFAULT 'long_form',
+        measurement_window TEXT NOT NULL,
+        published_at TEXT,
+        duration_seconds REAL NOT NULL,
+        points TEXT NOT NULL,
+        scene_metrics TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        confidence TEXT DEFAULT 'low',
+        measured_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(video_id, measurement_window)
       )`,
       
       // Keywords Performance
@@ -318,6 +371,85 @@ class Database {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (production_id) REFERENCES productions(id)
       )`,
+      `CREATE TABLE IF NOT EXISTS production_scenes (
+        id TEXT PRIMARY KEY,
+        production_id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        label TEXT NOT NULL,
+        script_text TEXT NOT NULL DEFAULT '',
+        prompt TEXT NOT NULL DEFAULT '',
+        duration REAL NOT NULL DEFAULT 5,
+        asset_type TEXT DEFAULT 'missing',
+        asset_origin TEXT DEFAULT 'generated',
+        asset_path TEXT,
+        audio_path TEXT,
+        narration_provider TEXT,
+        narration_model TEXT,
+        narration_task_id TEXT,
+        narration_error TEXT,
+        narration_generated_at TEXT,
+        narration_cost TEXT NOT NULL DEFAULT '{}',
+        provider TEXT,
+        model TEXT,
+        external_task_id TEXT,
+        status TEXT DEFAULT 'ready',
+        narration_status TEXT DEFAULT 'current',
+        revision INTEGER DEFAULT 1,
+        locked INTEGER DEFAULT 0,
+        rights_confirmed INTEGER DEFAULT 0,
+        provenance_source_ids TEXT NOT NULL DEFAULT '[]',
+        contains_synthetic_media INTEGER DEFAULT 0,
+        estimated_cost TEXT NOT NULL DEFAULT '{}',
+        actual_cost TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(production_id, position),
+        FOREIGN KEY (production_id) REFERENCES productions(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS production_scene_revisions (
+        id TEXT PRIMARY KEY,
+        production_id TEXT NOT NULL,
+        scene_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        status TEXT DEFAULT 'completed',
+        before_state TEXT NOT NULL DEFAULT '{}',
+        after_state TEXT NOT NULL DEFAULT '{}',
+        cost_evidence TEXT NOT NULL DEFAULT '{}',
+        error TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        completed_at TEXT,
+        FOREIGN KEY (production_id) REFERENCES productions(id),
+        FOREIGN KEY (scene_id) REFERENCES production_scenes(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS shorts_clips (
+        id TEXT PRIMARY KEY,
+        production_id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        tags TEXT NOT NULL DEFAULT '[]',
+        source_scene_ids TEXT NOT NULL DEFAULT '[]',
+        start_seconds REAL NOT NULL DEFAULT 0,
+        duration REAL NOT NULL DEFAULT 30,
+        layout TEXT NOT NULL DEFAULT 'blur',
+        rationale TEXT,
+        status TEXT NOT NULL DEFAULT 'proposed',
+        output_path TEXT,
+        captions_path TEXT,
+        publish_time TEXT,
+        privacy_status TEXT DEFAULT 'private',
+        inherited_evidence TEXT NOT NULL DEFAULT '{}',
+        rendered_at TEXT,
+        approved_at TEXT,
+        schedule_id TEXT,
+        youtube_id TEXT,
+        youtube_url TEXT,
+        error TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(production_id, position),
+        FOREIGN KEY (production_id) REFERENCES productions(id)
+      )`,
       `CREATE TABLE IF NOT EXISTS channel_profiles (
         id TEXT PRIMARY KEY,
         channel_name TEXT,
@@ -408,8 +540,28 @@ class Database {
       await this.executeQuery(tableQuery);
     }
 
+    await this.ensureColumns('production_scenes', {
+      narration_provider: 'TEXT',
+      narration_model: 'TEXT',
+      narration_task_id: 'TEXT',
+      narration_error: 'TEXT',
+      narration_generated_at: 'TEXT',
+      narration_cost: "TEXT NOT NULL DEFAULT '{}'"
+    });
+
     // Insert default settings
     await this.insertDefaultSettings();
+  }
+
+  async ensureColumns(tableName, columns) {
+    const allowedTables = new Set(['production_scenes']);
+    if (!allowedTables.has(tableName)) throw new Error(`Unsupported migration table: ${tableName}`);
+    const existing = new Set((await this.getAllRows(`PRAGMA table_info(${tableName})`)).map(column => column.name));
+    for (const [columnName, definition] of Object.entries(columns)) {
+      if (!existing.has(columnName)) {
+        await this.executeQuery(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+      }
+    }
   }
 
   async insertDefaultSettings() {
@@ -644,6 +796,9 @@ class Database {
       [productionId]
     );
     const provenance = await this.getContentProvenance(productionId);
+    const scenes = await this.listProductionScenes(productionId);
+    const sceneRevisions = scenes.length ? await this.listProductionSceneRevisions(productionId, 50) : [];
+    const shorts = await this.listShortClips(productionId);
     return {
       ...row,
       assets: JSON.parse(row.assets || '{}'),
@@ -658,7 +813,10 @@ class Database {
       provenance: provenance || {
         sources: [], claims: [], containsSyntheticMedia: false, status: 'not_required',
         summary: { sourceCount: 0, verifiedSources: 0, claimCount: 0, resolvedClaims: 0, highRiskClaims: 0, unresolvedClaims: 0 }
-      }
+      },
+      scenes,
+      sceneRevisions,
+      shorts
     };
   }
 
@@ -861,6 +1019,250 @@ class Database {
       request: JSON.parse(row.request || '{}'),
       providerData: JSON.parse(row.provider_data || '{}')
     } : null;
+  }
+
+  async replaceProductionScenes(productionId, scenes = []) {
+    await this.executeQuery('DELETE FROM production_scenes WHERE production_id = ?', [productionId]);
+    for (const [position, scene] of scenes.entries()) {
+      const id = scene.id || this.generateId('scene');
+      await this.executeQuery(
+        `INSERT INTO production_scenes (
+          id, production_id, position, label, script_text, prompt, duration,
+          asset_type, asset_origin, asset_path, audio_path,
+          narration_provider, narration_model, narration_task_id, narration_error,
+          narration_generated_at, narration_cost, provider, model,
+          external_task_id, status, narration_status, revision, locked,
+          rights_confirmed, provenance_source_ids, contains_synthetic_media,
+          estimated_cost, actual_cost
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id, productionId, position, scene.label, scene.scriptText || '', scene.prompt || '', scene.duration,
+          scene.assetType || 'missing', scene.assetOrigin || 'generated', scene.assetPath || null,
+          scene.audioPath || null, scene.narrationProvider || null, scene.narrationModel || null,
+          scene.narrationTaskId || null, scene.narrationError || null, scene.narrationGeneratedAt || null,
+          JSON.stringify(scene.narrationCost || {}), scene.provider || null, scene.model || null, scene.externalTaskId || null,
+          scene.status || 'ready', scene.narrationStatus || 'current', scene.revision || 1,
+          scene.locked ? 1 : 0, scene.rightsConfirmed ? 1 : 0,
+          JSON.stringify(scene.provenanceSourceIds || []), scene.containsSyntheticMedia ? 1 : 0,
+          JSON.stringify(scene.estimatedCost || {}), JSON.stringify(scene.actualCost || {})
+        ]
+      );
+    }
+    return this.listProductionScenes(productionId);
+  }
+
+  async listProductionScenes(productionId) {
+    const rows = await this.getAllRows(
+      'SELECT * FROM production_scenes WHERE production_id = ? ORDER BY position, created_at',
+      [productionId]
+    );
+    return rows.map(row => this.parseProductionScene(row));
+  }
+
+  async getProductionScene(productionId, sceneId) {
+    return this.parseProductionScene(await this.getRow(
+      'SELECT * FROM production_scenes WHERE production_id = ? AND id = ?',
+      [productionId, sceneId]
+    ));
+  }
+
+  async updateProductionScene(productionId, sceneId, changes = {}) {
+    const current = await this.getProductionScene(productionId, sceneId);
+    if (!current) return null;
+    const next = { ...current, ...changes };
+    await this.executeQuery(
+      `UPDATE production_scenes SET
+        position = ?, label = ?, script_text = ?, prompt = ?, duration = ?,
+        asset_type = ?, asset_origin = ?, asset_path = ?, audio_path = ?,
+        narration_provider = ?, narration_model = ?, narration_task_id = ?, narration_error = ?,
+        narration_generated_at = ?, narration_cost = ?, provider = ?,
+        model = ?, external_task_id = ?, status = ?, narration_status = ?, revision = ?,
+        locked = ?, rights_confirmed = ?, provenance_source_ids = ?,
+        contains_synthetic_media = ?, estimated_cost = ?, actual_cost = ?,
+        updated_at = datetime('now')
+       WHERE production_id = ? AND id = ?`,
+      [
+        next.position, next.label, next.scriptText || '', next.prompt || '', next.duration,
+        next.assetType || 'missing', next.assetOrigin || 'generated', next.assetPath || null,
+        next.audioPath || null, next.narrationProvider || null, next.narrationModel || null,
+        next.narrationTaskId || null, next.narrationError || null, next.narrationGeneratedAt || null,
+        JSON.stringify(next.narrationCost || {}), next.provider || null, next.model || null, next.externalTaskId || null,
+        next.status || 'ready', next.narrationStatus || 'current', next.revision || 1,
+        next.locked ? 1 : 0, next.rightsConfirmed ? 1 : 0,
+        JSON.stringify(next.provenanceSourceIds || []), next.containsSyntheticMedia ? 1 : 0,
+        JSON.stringify(next.estimatedCost || {}), JSON.stringify(next.actualCost || {}),
+        productionId, sceneId
+      ]
+    );
+    return this.getProductionScene(productionId, sceneId);
+  }
+
+  async reorderProductionScenes(productionId, orderedIds = []) {
+    const scenes = await this.listProductionScenes(productionId);
+    if (orderedIds.length !== scenes.length || new Set(orderedIds).size !== scenes.length ||
+      scenes.some(scene => !orderedIds.includes(scene.id))) {
+      throw new Error('Scene order must contain every scene exactly once');
+    }
+    // Move through temporary negative positions to preserve the unique constraint.
+    for (const scene of scenes) {
+      await this.executeQuery('UPDATE production_scenes SET position = ? WHERE id = ?', [-(scene.position + 1), scene.id]);
+    }
+    for (const [position, sceneId] of orderedIds.entries()) {
+      await this.executeQuery(
+        `UPDATE production_scenes SET position = ?, status = 'needs_rebuild', updated_at = datetime('now') WHERE id = ?`,
+        [position, sceneId]
+      );
+    }
+    return this.listProductionScenes(productionId);
+  }
+
+  async saveProductionSceneRevision(input = {}) {
+    const id = this.generateId('scene_revision');
+    await this.executeQuery(
+      `INSERT INTO production_scene_revisions (
+        id, production_id, scene_id, action, status, before_state, after_state,
+        cost_evidence, error, completed_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id, input.productionId, input.sceneId, input.action, input.status || 'completed',
+        JSON.stringify(input.before || {}), JSON.stringify(input.after || {}),
+        JSON.stringify(input.costEvidence || {}), input.error || null,
+        input.completedAt || new Date().toISOString()
+      ]
+    );
+    return this.getProductionSceneRevision(id);
+  }
+
+  async getProductionSceneRevision(id) {
+    return this.parseProductionSceneRevision(await this.getRow('SELECT * FROM production_scene_revisions WHERE id = ?', [id]));
+  }
+
+  async listProductionSceneRevisions(productionId, limit = 100) {
+    const rows = await this.getAllRows(
+      'SELECT * FROM production_scene_revisions WHERE production_id = ? ORDER BY created_at DESC LIMIT ?',
+      [productionId, limit]
+    );
+    return rows.map(row => this.parseProductionSceneRevision(row));
+  }
+
+  parseProductionScene(row) {
+    if (!row) return null;
+    return {
+      ...row,
+      position: Number(row.position),
+      duration: Number(row.duration),
+      scriptText: row.script_text || '',
+      assetType: row.asset_type || 'missing',
+      assetOrigin: row.asset_origin || 'generated',
+      assetPath: row.asset_path || null,
+      audioPath: row.audio_path || null,
+      narrationProvider: row.narration_provider || null,
+      narrationModel: row.narration_model || null,
+      narrationTaskId: row.narration_task_id || null,
+      narrationError: row.narration_error || null,
+      narrationGeneratedAt: row.narration_generated_at || null,
+      narrationCost: JSON.parse(row.narration_cost || '{}'),
+      externalTaskId: row.external_task_id || null,
+      narrationStatus: row.narration_status || 'current',
+      revision: Number(row.revision || 1),
+      locked: Boolean(row.locked),
+      rightsConfirmed: Boolean(row.rights_confirmed),
+      provenanceSourceIds: JSON.parse(row.provenance_source_ids || '[]'),
+      containsSyntheticMedia: Boolean(row.contains_synthetic_media),
+      estimatedCost: JSON.parse(row.estimated_cost || '{}'),
+      actualCost: JSON.parse(row.actual_cost || '{}')
+    };
+  }
+
+  parseProductionSceneRevision(row) {
+    return row ? {
+      ...row,
+      before: JSON.parse(row.before_state || '{}'),
+      after: JSON.parse(row.after_state || '{}'),
+      costEvidence: JSON.parse(row.cost_evidence || '{}')
+    } : null;
+  }
+
+  async replaceShortClips(productionId, clips = []) {
+    await this.executeQuery('DELETE FROM shorts_clips WHERE production_id = ?', [productionId]);
+    for (const [position, clip] of clips.entries()) {
+      const id = clip.id || this.generateId('short');
+      await this.executeQuery(
+        `INSERT INTO shorts_clips (
+          id, production_id, position, title, description, tags, source_scene_ids,
+          start_seconds, duration, layout, rationale, status, output_path, captions_path,
+          publish_time, privacy_status, inherited_evidence, rendered_at, approved_at,
+          schedule_id, youtube_id, youtube_url, error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id, productionId, position, clip.title, clip.description || '', JSON.stringify(clip.tags || []),
+          JSON.stringify(clip.sourceSceneIds || []), Number(clip.startSeconds || 0), Number(clip.duration || 30),
+          clip.layout || 'blur', clip.rationale || null, clip.status || 'proposed', clip.outputPath || null,
+          clip.captionsPath || null, clip.publishTime || null, clip.privacyStatus || 'private',
+          JSON.stringify(clip.inheritedEvidence || {}), clip.renderedAt || null, clip.approvedAt || null,
+          clip.scheduleId || null, clip.youtubeId || null, clip.youtubeUrl || null, clip.error || null
+        ]
+      );
+    }
+    return this.listShortClips(productionId);
+  }
+
+  async listShortClips(productionId) {
+    const rows = await this.getAllRows(
+      'SELECT * FROM shorts_clips WHERE production_id = ? ORDER BY position, created_at',
+      [productionId]
+    );
+    return rows.map(row => this.parseShortClip(row));
+  }
+
+  async getShortClip(id) {
+    return this.parseShortClip(await this.getRow('SELECT * FROM shorts_clips WHERE id = ?', [id]));
+  }
+
+  async updateShortClip(id, changes = {}) {
+    const current = await this.getShortClip(id);
+    if (!current) return null;
+    const next = { ...current, ...changes };
+    await this.executeQuery(
+      `UPDATE shorts_clips SET
+        title = ?, description = ?, tags = ?, source_scene_ids = ?, start_seconds = ?,
+        duration = ?, layout = ?, rationale = ?, status = ?, output_path = ?, captions_path = ?,
+        publish_time = ?, privacy_status = ?, inherited_evidence = ?, rendered_at = ?, approved_at = ?,
+        schedule_id = ?, youtube_id = ?, youtube_url = ?, error = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+      [
+        next.title, next.description || '', JSON.stringify(next.tags || []), JSON.stringify(next.sourceSceneIds || []),
+        Number(next.startSeconds || 0), Number(next.duration || 30), next.layout || 'blur', next.rationale || null,
+        next.status || 'proposed', next.outputPath || null, next.captionsPath || null, next.publishTime || null,
+        next.privacyStatus || 'private', JSON.stringify(next.inheritedEvidence || {}), next.renderedAt || null,
+        next.approvedAt || null, next.scheduleId || null, next.youtubeId || null, next.youtubeUrl || null,
+        next.error || null, id
+      ]
+    );
+    return this.getShortClip(id);
+  }
+
+  parseShortClip(row) {
+    if (!row) return null;
+    return {
+      ...row,
+      productionId: row.production_id,
+      position: Number(row.position),
+      tags: JSON.parse(row.tags || '[]'),
+      sourceSceneIds: JSON.parse(row.source_scene_ids || '[]'),
+      startSeconds: Number(row.start_seconds || 0),
+      duration: Number(row.duration || 0),
+      outputPath: row.output_path || null,
+      captionsPath: row.captions_path || null,
+      publishTime: row.publish_time || null,
+      privacyStatus: row.privacy_status || 'private',
+      inheritedEvidence: JSON.parse(row.inherited_evidence || '{}'),
+      renderedAt: row.rendered_at || null,
+      approvedAt: row.approved_at || null,
+      scheduleId: row.schedule_id || null,
+      youtubeId: row.youtube_id || null,
+      youtubeUrl: row.youtube_url || null
+    };
   }
 
   async markInterruptedJobs() {
@@ -1344,6 +1746,96 @@ class Database {
     };
   }
 
+  async saveRetentionSnapshot(snapshot) {
+    const existing = await this.getRow(
+      'SELECT id FROM retention_snapshots WHERE video_id = ? AND measurement_window = ?',
+      [snapshot.videoId, snapshot.measurementWindow]
+    );
+    const id = existing?.id || this.generateId('retention');
+    await this.executeQuery(
+      `INSERT INTO retention_snapshots (
+        id, video_id, production_id, short_clip_id, title, surface,
+        measurement_window, published_at, duration_seconds, points,
+        scene_metrics, summary, confidence, measured_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(video_id, measurement_window) DO UPDATE SET
+        production_id = excluded.production_id,
+        short_clip_id = excluded.short_clip_id,
+        title = excluded.title,
+        surface = excluded.surface,
+        published_at = excluded.published_at,
+        duration_seconds = excluded.duration_seconds,
+        points = excluded.points,
+        scene_metrics = excluded.scene_metrics,
+        summary = excluded.summary,
+        confidence = excluded.confidence,
+        measured_at = excluded.measured_at`,
+      [
+        id,
+        snapshot.videoId,
+        snapshot.productionId || null,
+        snapshot.shortClipId || null,
+        snapshot.title || null,
+        snapshot.surface || 'long_form',
+        snapshot.measurementWindow,
+        snapshot.publishedAt || null,
+        Number(snapshot.durationSeconds || 0),
+        JSON.stringify(snapshot.points || []),
+        JSON.stringify(snapshot.sceneMetrics || []),
+        JSON.stringify(snapshot.summary || {}),
+        snapshot.confidence || 'low',
+        snapshot.measuredAt || new Date().toISOString()
+      ]
+    );
+    return this.getRetentionSnapshot(id);
+  }
+
+  async getRetentionSnapshot(id) {
+    const row = await this.getRow('SELECT * FROM retention_snapshots WHERE id = ?', [id]);
+    return this.parseRetentionSnapshot(row);
+  }
+
+  async listRetentionSnapshots(options = {}) {
+    const conditions = [];
+    const params = [];
+    if (options.videoId) {
+      conditions.push('video_id = ?');
+      params.push(options.videoId);
+    }
+    if (options.surface) {
+      conditions.push('surface = ?');
+      params.push(options.surface);
+    }
+    if (options.measurementWindow) {
+      conditions.push('measurement_window = ?');
+      params.push(options.measurementWindow);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const limit = Math.max(1, Math.min(50, Number(options.limit || 12)));
+    const rows = await this.getAllRows(
+      `SELECT * FROM retention_snapshots ${where} ORDER BY measured_at DESC LIMIT ?`,
+      [...params, limit]
+    );
+    return rows.map(row => this.parseRetentionSnapshot(row));
+  }
+
+  parseRetentionSnapshot(row) {
+    if (!row) return null;
+    return {
+      ...row,
+      videoId: row.video_id,
+      productionId: row.production_id,
+      shortClipId: row.short_clip_id,
+      measurementWindow: row.measurement_window,
+      publishedAt: row.published_at,
+      durationSeconds: Number(row.duration_seconds || 0),
+      measuredAt: row.measured_at,
+      points: JSON.parse(row.points || '[]'),
+      sceneMetrics: JSON.parse(row.scene_metrics || '[]'),
+      summary: JSON.parse(row.summary || '{}')
+    };
+  }
+
   async saveLearningRecommendation(recommendation) {
     const existing = await this.getRow(
       'SELECT id FROM learning_recommendations WHERE fingerprint = ?',
@@ -1423,28 +1915,71 @@ class Database {
   }
 
   async getPublishedContentContext(youtubeId) {
-    const row = await this.getRow(
-      `SELECT sch.production_id, sch.published_at, sch.title, ps.strategy, ps.script, ps.thumbnail, ps.seo,
-              cr.editor_data
-       FROM publish_schedule sch
-       LEFT JOIN production_snapshots ps ON ps.production_id = sch.production_id
-       LEFT JOIN content_reviews cr ON cr.production_id = sch.production_id
-       WHERE sch.youtube_id = ? ORDER BY sch.published_at DESC LIMIT 1`,
+    const schedule = await this.getRow(
+      `SELECT production_id, published_at, title, metadata
+       FROM publish_schedule WHERE youtube_id = ? ORDER BY published_at DESC LIMIT 1`,
       [youtubeId]
     );
-    if (!row) return {};
+    if (!schedule) return {};
+    const metadata = JSON.parse(schedule.metadata || '{}');
+    const sourceProductionId = metadata.sourceProductionId || schedule.production_id;
+    const row = await this.getRow(
+      `SELECT ps.strategy, ps.script, ps.thumbnail, ps.seo, cr.editor_data
+       FROM production_snapshots ps
+       LEFT JOIN content_reviews cr ON cr.production_id = ps.production_id
+       WHERE ps.production_id = ?`,
+      [sourceProductionId]
+    ) || {};
     const editorData = JSON.parse(row.editor_data || '{}');
     const thumbnail = JSON.parse(row.thumbnail || '{}');
     const selectedThumbnail = editorData.packagingExperiment?.thumbnailVariants?.[editorData.selectedThumbnailVariant];
+    const isShort = metadata.contentType === 'short';
+    const strategy = JSON.parse(row.strategy || '{}');
+    const sourceScenes = await this.listProductionScenes(sourceProductionId);
+    const shortClip = isShort && metadata.shortClipId ? await this.getShortClip(metadata.shortClipId) : null;
     return {
-      productionId: row.production_id,
-      publishedAt: row.published_at,
-      title: editorData.title || row.title,
-      strategy: JSON.parse(row.strategy || '{}'),
+      productionId: sourceProductionId,
+      shortClipId: metadata.shortClipId || null,
+      contentFormat: isShort ? 'short' : 'long_form',
+      publishedAt: schedule.published_at,
+      title: isShort ? schedule.title : editorData.title || schedule.title,
+      strategy: isShort
+        ? { ...strategy, contentType: 'shorts', requestedStyle: 'shorts', requestedLengthKey: 'short' }
+        : strategy,
       script: JSON.parse(row.script || '{}'),
       thumbnail: selectedThumbnail?.concept ? { ...thumbnail, concept: selectedThumbnail.concept } : thumbnail,
-      seo: JSON.parse(row.seo || '{}')
+      seo: JSON.parse(row.seo || '{}'),
+      retentionScenes: this.buildRetentionSceneContext(sourceScenes, shortClip),
+      retentionDuration: isShort ? shortClip?.duration || null : sourceScenes.reduce((sum, scene) => sum + Number(scene.duration || 0), 0)
     };
+  }
+
+  buildRetentionSceneContext(scenes = [], shortClip = null) {
+    let cursor = 0;
+    const timeline = scenes.map(scene => {
+      const duration = Math.max(0, Number(scene.duration || 0));
+      const item = { ...scene, startSeconds: cursor, endSeconds: cursor + duration };
+      cursor += duration;
+      return item;
+    });
+    if (!shortClip) return timeline;
+
+    const clipStart = Math.max(0, Number(shortClip.startSeconds || 0));
+    const clipEnd = clipStart + Math.max(0, Number(shortClip.duration || 0));
+    const allowed = new Set(shortClip.sourceSceneIds || []);
+    return timeline.flatMap(scene => {
+      if (allowed.size && !allowed.has(scene.id)) return [];
+      const start = Math.max(scene.startSeconds, clipStart);
+      const end = Math.min(scene.endSeconds, clipEnd);
+      if (end <= start) return [];
+      return [{
+        ...scene,
+        sourceStartSeconds: start,
+        startSeconds: start - clipStart,
+        endSeconds: end - clipStart,
+        duration: end - start
+      }];
+    });
   }
 
   // Keyword performance

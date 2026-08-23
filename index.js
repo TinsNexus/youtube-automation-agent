@@ -22,6 +22,8 @@ const paths = require('./utils/paths');
 const { ProductionReadinessService } = require('./utils/production-readiness-service');
 const { GenerationRecoveryService, GENERATION_STAGES } = require('./utils/generation-recovery-service');
 const { ProvenanceService } = require('./utils/provenance-service');
+const { SceneRepairService } = require('./utils/scene-repair-service');
+const { ShortsRepurposingService } = require('./utils/shorts-repurposing-service');
 const { version } = require('./package.json');
 const chalk = require('chalk');
 
@@ -41,6 +43,8 @@ class YouTubeAutomationAgent {
     this.readiness = null;
     this.recovery = null;
     this.provenance = null;
+    this.scenes = null;
+    this.shorts = null;
     this.setupRequired = false;
   }
 
@@ -92,6 +96,12 @@ class YouTubeAutomationAgent {
       // Initialize agents
       this.logger.info('Initializing agents...');
       await this.initializeAgents();
+      this.scenes = this.agents.production?.sceneRepair || new SceneRepairService(
+        this.db,
+        this.agents.production?.aiVideoGenerator,
+        { logger: this.logger }
+      );
+      this.shorts = new ShortsRepurposingService(this.db, this.agents.publishing, { logger: this.logger });
 
       // Show which pipeline stages will run for real vs. be simulated
       const capabilities = await this.logCapabilitySummary();
@@ -393,7 +403,8 @@ class YouTubeAutomationAgent {
         if (!this.agents.publishing) return res.status(503).json({ success: false, error: 'YouTube publishing is not configured' });
         const { contentId } = req.params;
         const bundle = await this.db.getProductionBundle(contentId);
-        if (!bundle || bundle.review_status !== 'approved') {
+        const short = bundle ? null : await this.db.getShortClip(contentId);
+        if ((!bundle || bundle.review_status !== 'approved') && (!short || !['scheduled', 'uploading', 'reconciliation_required'].includes(short.status))) {
           return res.status(409).json({ success: false, error: 'Content must pass review and be approved before publishing' });
         }
         const result = await this.agents.publishing.publishContent(contentId);
@@ -506,9 +517,189 @@ class YouTubeAutomationAgent {
     });
 
     this.app.get('/api/content/:productionId', async (req, res) => {
-      const bundle = await this.db.getProductionBundle(req.params.productionId);
+      let bundle = await this.db.getProductionBundle(req.params.productionId);
       if (!bundle) return res.status(404).json({ error: 'Content not found' });
+      if (this.scenes && !bundle.scenes?.length) {
+        await this.scenes.ensureManifest(bundle);
+        bundle = await this.db.getProductionBundle(req.params.productionId);
+      }
       return res.json(this.decorateContentBundle(bundle));
+    });
+
+    this.app.get('/api/content/:productionId/scenes/:sceneId/estimate', async (req, res) => {
+      try {
+        if (!this.scenes) return res.status(503).json({ error: 'Scene repair requires completed setup' });
+        const result = await this.scenes.regenerationEstimate(req.params.productionId, req.params.sceneId, {
+          provider: req.query.provider
+        });
+        return res.json(result);
+      } catch (error) {
+        return res.status(error.status || 400).json({ error: error.message, code: error.code, details: error.details });
+      }
+    });
+
+    this.app.patch('/api/content/:productionId/scenes/:sceneId', protect, async (req, res) => {
+      try {
+        if (!this.scenes) return res.status(503).json({ error: 'Scene repair requires completed setup' });
+        const result = await this.scenes.updateScene(req.params.productionId, req.params.sceneId, req.body || {});
+        await this.refreshContentReview(req.params.productionId, 'Scene changes require review before scheduling');
+        return res.json({ success: true, result: this.scenes.decorateScene(result, req.params.productionId) });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code, details: error.details });
+      }
+    });
+
+    this.app.post('/api/content/:productionId/scenes/reorder', protect, async (req, res) => {
+      try {
+        if (!this.scenes) return res.status(503).json({ error: 'Scene repair requires completed setup' });
+        const result = await this.scenes.reorder(req.params.productionId, req.body?.sceneIds);
+        await this.refreshContentReview(req.params.productionId, 'Timeline order changed; rebuild and review before scheduling');
+        return res.json({ success: true, result: result.map(scene => this.scenes.decorateScene(scene, req.params.productionId)) });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code, details: error.details });
+      }
+    });
+
+    this.app.post('/api/content/:productionId/scenes/:sceneId/regenerate', protect, async (req, res) => {
+      try {
+        if (!this.scenes) return res.status(503).json({ error: 'Scene repair requires completed setup' });
+        const result = await this.scenes.regenerate(req.params.productionId, req.params.sceneId, req.body || {});
+        await this.refreshContentReview(req.params.productionId, 'Regenerated scene must be rebuilt and reviewed');
+        return res.status(202).json({ success: true, result: {
+          ...result,
+          scene: this.scenes.decorateScene(result.scene, req.params.productionId)
+        } });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code, details: error.details });
+      }
+    });
+
+    this.app.post('/api/content/:productionId/shorts/propose', protect, async (req, res) => {
+      try {
+        if (!this.shorts) return res.status(503).json({ error: 'Shorts repurposing requires completed setup' });
+        const result = await this.shorts.propose(req.params.productionId, req.body || {});
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
+      }
+    });
+
+    this.app.patch('/api/content/:productionId/shorts/:clipId', protect, async (req, res) => {
+      try {
+        if (!this.shorts) return res.status(503).json({ error: 'Shorts repurposing requires completed setup' });
+        const result = await this.shorts.update(req.params.productionId, req.params.clipId, req.body || {});
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
+      }
+    });
+
+    this.app.post('/api/content/:productionId/shorts/:clipId/render', protect, async (req, res) => {
+      try {
+        if (!this.shorts) return res.status(503).json({ error: 'Shorts repurposing requires completed setup' });
+        const result = await this.shorts.render(req.params.productionId, req.params.clipId);
+        return res.status(202).json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
+      }
+    });
+
+    this.app.post('/api/content/:productionId/shorts/:clipId/approve', protect, async (req, res) => {
+      try {
+        if (!this.shorts) return res.status(503).json({ error: 'Shorts repurposing requires completed setup' });
+        const result = await this.shorts.approve(req.params.productionId, req.params.clipId, req.body || {});
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
+      }
+    });
+
+    this.app.get('/api/content/:productionId/shorts/:clipId/asset/:kind', async (req, res) => {
+      try {
+        const clip = await this.db.getShortClip(req.params.clipId);
+        if (!clip || clip.productionId !== req.params.productionId) return res.status(404).json({ error: 'Short asset not found' });
+        const filePath = req.params.kind === 'video' ? clip.outputPath : req.params.kind === 'captions' ? clip.captionsPath : null;
+        if (!filePath) return res.status(404).json({ error: 'Short asset not found' });
+        const resolved = path.resolve(filePath);
+        const shortsRoot = path.resolve(__dirname, 'data', 'shorts');
+        if (!resolved.startsWith(`${shortsRoot}${path.sep}`)) return res.status(403).json({ error: 'Short asset path is not allowed' });
+        await fs.access(resolved);
+        return res.sendFile(resolved);
+      } catch (_error) {
+        return res.status(404).json({ error: 'Short asset not found' });
+      }
+    });
+
+    this.app.post('/api/content/:productionId/scenes/:sceneId/narration', protect, async (req, res) => {
+      try {
+        if (!this.scenes) return res.status(503).json({ error: 'Narration recovery requires completed setup' });
+        const result = await this.scenes.regenerateNarration(req.params.productionId, req.params.sceneId, req.body || {});
+        await this.refreshContentReview(req.params.productionId, 'Narration regenerated; rebuild the final video before approval');
+        return res.status(202).json({ success: true, result: this.scenes.decorateScene(result, req.params.productionId) });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code, details: error.details });
+      }
+    });
+
+    this.app.post('/api/content/:productionId/narration/silence', protect, async (req, res) => {
+      try {
+        if (!this.scenes) return res.status(503).json({ error: 'Narration recovery requires completed setup' });
+        const result = await this.scenes.setSilenceOverride(req.params.productionId, req.body || {});
+        await this.refreshContentReview(
+          req.params.productionId,
+          result.enabled ? 'Intentional silence recorded; rebuild and review before approval' : 'Narration is required again; regenerate it before approval'
+        );
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code, details: error.details });
+      }
+    });
+
+    this.app.put(
+      '/api/content/:productionId/scenes/:sceneId/asset',
+      protect,
+      express.raw({ type: ['image/*', 'video/*'], limit: '100mb' }),
+      async (req, res) => {
+        try {
+          if (!this.scenes) return res.status(503).json({ error: 'Scene repair requires completed setup' });
+          const result = await this.scenes.replaceAsset(req.params.productionId, req.params.sceneId, {
+            buffer: req.body,
+            contentType: req.get('content-type'),
+            filename: req.get('x-file-name'),
+            rightsConfirmed: req.get('x-rights-confirmed') === 'true',
+            containsSyntheticMedia: req.get('x-synthetic-media') === 'true'
+          });
+          await this.refreshContentReview(req.params.productionId, 'Replacement scene asset must be rebuilt and reviewed');
+          return res.json({ success: true, result: this.scenes.decorateScene(result, req.params.productionId) });
+        } catch (error) {
+          return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code, details: error.details });
+        }
+      }
+    );
+
+    this.app.post('/api/content/:productionId/scenes/rebuild', protect, async (req, res) => {
+      try {
+        if (!this.scenes) return res.status(503).json({ error: 'Scene repair requires completed setup' });
+        const result = await this.scenes.rebuild(req.params.productionId);
+        await this.refreshContentReview(req.params.productionId, 'Scene repair rebuilt; final approval is required');
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code, details: error.details });
+      }
+    });
+
+    this.app.get('/api/content/:productionId/scenes/:sceneId/asset', async (req, res) => {
+      try {
+        const scene = await this.db.getProductionScene(req.params.productionId, req.params.sceneId);
+        if (!scene?.assetPath) return res.status(404).json({ error: 'Scene asset not found' });
+        const resolved = path.resolve(scene.assetPath);
+        const dataRoot = path.resolve(__dirname, 'data');
+        if (!resolved.startsWith(`${dataRoot}${path.sep}`)) return res.status(403).json({ error: 'Scene asset path is not allowed' });
+        await fs.access(resolved);
+        return res.sendFile(resolved);
+      } catch (_error) {
+        return res.status(404).json({ error: 'Scene asset not found' });
+      }
     });
 
     this.app.patch('/api/content/:productionId', protect, async (req, res) => {
@@ -708,6 +899,39 @@ class YouTubeAutomationAgent {
         data: { recommendationId, status }
       });
       return res.json({ success: true, result: recommendation });
+    });
+
+    this.app.get('/api/retention/:videoId', async (req, res) => {
+      const videoId = String(req.params.videoId || '').trim();
+      if (!/^[A-Za-z0-9_-]{1,100}$/.test(videoId)) {
+        return res.status(400).json({ error: 'A valid YouTube video ID is required' });
+      }
+      const snapshots = await this.db.listRetentionSnapshots({ videoId, limit: 10 });
+      return res.json({ success: true, result: snapshots });
+    });
+
+    this.app.post('/api/retention/:videoId/refresh', protect, async (req, res) => {
+      try {
+        const videoId = String(req.params.videoId || '').trim();
+        const measurementWindow = String(req.body?.measurementWindow || 'rolling');
+        if (!/^[A-Za-z0-9_-]{1,100}$/.test(videoId)) {
+          return res.status(400).json({ error: 'A valid YouTube video ID is required' });
+        }
+        if (!['24h', '7d', 'rolling'].includes(measurementWindow)) {
+          return res.status(400).json({ error: 'Measurement window must be 24h, 7d, or rolling' });
+        }
+        if (!this.agents.analytics) {
+          return res.status(503).json({ error: 'YouTube Analytics is not initialized' });
+        }
+        const report = await this.agents.analytics.analyzeVideoPerformance(videoId, { measurementWindow });
+        return res.json({
+          success: true,
+          result: report.retentionSnapshot || null,
+          retention: report.retention
+        });
+      } catch (error) {
+        return res.status(error.status || 400).json({ error: error.message });
+      }
     });
 
     this.app.post('/api/ideas', protect, async (req, res) => {
@@ -1197,8 +1421,20 @@ class YouTubeAutomationAgent {
 
   decorateContentBundle(bundle) {
     const experiment = bundle.editorData?.packagingExperiment;
+    const sceneLabels = new Map((bundle.scenes || []).map(scene => [scene.id, scene.label]));
     return {
       ...bundle,
+      scenes: (bundle.scenes || []).map(scene => this.scenes
+        ? this.scenes.decorateScene(scene, bundle.id)
+        : scene),
+      shorts: (bundle.shorts || []).map(clip => ({
+        ...clip,
+        sourceSceneLabels: clip.sourceSceneIds.map(id => sceneLabels.get(id)).filter(Boolean),
+        assetUrls: {
+          video: clip.outputPath ? `/api/content/${bundle.id}/shorts/${clip.id}/asset/video` : null,
+          captions: clip.captionsPath ? `/api/content/${bundle.id}/shorts/${clip.id}/asset/captions` : null
+        }
+      })),
       assetUrls: {
         video: bundle.assets?.finalVideo?.path && !bundle.assets?.finalVideo?.simulated ? `/api/content/${bundle.id}/asset/video` : null,
         thumbnail: bundle.assets?.thumbnail?.path ? `/api/content/${bundle.id}/asset/thumbnail` : null,
@@ -1209,6 +1445,24 @@ class YouTubeAutomationAgent {
         script: bundle.assets?.script?.originalPath ? `/api/content/${bundle.id}/asset/script` : null
       }
     };
+  }
+
+  async refreshContentReview(productionId, reviewNotes) {
+    const bundle = await this.db.getProductionBundle(productionId);
+    if (!bundle) return null;
+    const profile = await this.db.getChannelProfile() || {};
+    const quality = await this.operator.runQualityChecks({
+      ...bundle,
+      scheduledPublishTime: bundle.scheduled_publish_time
+    }, profile);
+    const status = quality.passed ? 'needs_review' : 'needs_attention';
+    return this.db.saveContentReview(productionId, {
+      status,
+      editorData: { ...(bundle.editorData || {}), factChecked: false, rightsConfirmed: false },
+      qualityChecks: quality.checks,
+      reviewNotes: reviewNotes || (quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`),
+      reviewedAt: null
+    });
   }
 
   async approveContent(productionId, input) {
@@ -1255,7 +1509,8 @@ class YouTubeAutomationAgent {
       estimatedDuration: bundle.estimated_duration,
       privacyStatus: editorData.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private',
       provenance: bundle.provenance,
-      containsSyntheticMedia: bundle.provenance?.containsSyntheticMedia === true
+      containsSyntheticMedia: bundle.provenance?.containsSyntheticMedia === true,
+      scenes: bundle.scenes || []
     };
     const profile = await this.db.getChannelProfile() || {};
     const quality = await this.operator.runQualityChecks(productionData, profile);
@@ -1282,6 +1537,7 @@ class YouTubeAutomationAgent {
         seo: productionData.seo,
         thumbnail: productionData.assets.thumbnail,
         video: productionData.assets.finalVideo,
+        audio: productionData.assets.audio,
         captions: productionData.assets.captions,
         privacyStatus: editorData.privacyStatus || process.env.DEFAULT_PRIVACY_STATUS || 'private',
         containsSyntheticMedia: productionData.containsSyntheticMedia

@@ -8,15 +8,16 @@ Research topics → write scripts → generate narration and visuals → assembl
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node.js 18+](https://img.shields.io/badge/node-18%2B-43853d.svg)](package.json)
 
-## What's new in version 2.8.0
+## What's new on master
 
-Version 2.8 adds an evidence-first Research & Provenance Desk to every production:
+The latest build expands AgentTube from evidence-first long-form production into a repairable, provider-flexible, multi-format channel workflow:
 
-- **Source-aware research:** YouTube trend and competitor signals retain their exact video URLs, titles, publishers, and publication dates through autonomous planning.
-- **Claim ledger:** AI scripts declare externally verifiable claims and connect them only to sources supplied by the research stage.
-- **Evidence review:** Review Studio lets an operator add and verify sources, mark claims supported, unsupported, or explicitly waived, and record reviewer notes.
-- **Fail-closed approval:** unresolved claims block approval; a supported claim must link to at least one reviewer-verified source, and a waiver requires a note.
-- **Disclosure handoff:** realistic altered or synthetic media can be declared in Review Studio and is passed to YouTube's upload metadata.
+- **Scene-aware retention:** collect YouTube's real 100-point audience-retention curve, map it to the durable production timeline, and review scene-specific drop-off, rewatch, and strong-hold evidence before it can guide future work.
+- **Shorts Repurposing Studio:** turn an approved production into three source-scene-backed 9:16 drafts, choose blurred, cropped, or stacked layouts, render mobile captions locally, and approve each Short on its own schedule.
+- **Scene-level repair:** edit, reorder, lock, replace, or regenerate one scene, then rebuild the final MP4 without discarding the rest of the production.
+- **Narration reliability:** missing, stale, simulated, or failed TTS now blocks assembly, approval, scheduling, and publishing; narration-only recovery and reasoned intentional silence are explicit operator actions.
+- **Multi-provider AI video:** route bounded clips across Seedance, MiniMax H3, Gemini Omni Flash, Kling, and Wan with durable external task IDs, paid-seconds caps, hybrid local assembly, and slideshow fallback.
+- **Research and provenance:** retain exact sources, connect factual claims to reviewer-verified evidence, and carry realistic synthetic-media disclosure into YouTube metadata.
 
 See the complete release history in [CHANGELOG.md](CHANGELOG.md).
 
@@ -58,6 +59,26 @@ Every generation stage writes a local SQLite checkpoint. If a provider times out
 
 Autonomous Operator runs preserve their research and editorial plan, so **Resume run** continues unfinished plan items instead of researching and generating completed videos again. Publishing remains fail-closed: if an upload may have reached YouTube but no video ID was returned, Lumen requires channel reconciliation before another upload attempt.
 
+### Repair one scene without starting over
+
+Every production now keeps a durable scene manifest with its narration, visual prompt, timing, provider/task identity, asset origin, rights state, evidence links, and revision history. Open **Scene Repair Studio** inside Review Studio to edit a scene, change its order, lock a scene that already works, upload a licensed replacement asset, or regenerate only that scene.
+
+Paid video regeneration always shows the provider and generated seconds and requires a separate confirmation. Uploaded assets require an explicit rights confirmation. Narration edits invalidate that scene's audio and factual review; live narration must be regenerated and any new factual claim must be reviewed against verified evidence before approval.
+
+Narration is fail-closed. AgentTube records the TTS provider, model, external task when available, generation time, cost evidence, and failure reason for every scene. If narration is missing, simulated, stale, or failed, the production cannot be approved, scheduled, or published. Use **Regenerate narration only** to repair the audio without spending video-generation credits or replacing a visual.
+
+An intentionally silent production requires a separate operator confirmation and a stored reason of at least 10 characters. The override remains visible in Review Studio, can be reversed, and is included in the narration revision history. Silence is never inferred from a failed provider call.
+
+When the timeline is ready, **Rebuild final video** creates a new MP4 and scene-aware captions while preserving the previous final video path in the production record. Approval stays blocked while any scene is missing, generating, stale, failed, or waiting for rebuild. Approved or scheduled productions are locked against scene repair.
+
+### Repurpose an approved video into Shorts
+
+Open **Shorts Repurposing Studio** inside Review Studio and choose **Create 3 Short drafts**. AgentTube selects self-contained windows from the durable scene timeline and preserves the exact source-scene IDs, start time, duration, rationale, title, description, tags, layout, and inherited review evidence for each candidate. Draft selection is local and does not call an AI provider.
+
+Choose a blurred-canvas, center-crop, or stacked-focus layout, then render a real 9:16 MP4 with mobile-safe burned captions and a separate SRT file. The source video and narration are reused, so the default workflow does not spend new image, video, or TTS credits. Changing the layout invalidates the prior render and requires a fresh local render.
+
+Every Short has its own approval and schedule. Scheduling remains blocked until the source production is approved, provenance is resolved, uploaded media rights are confirmed, every source scene is current, and the operator explicitly confirms the Short's privacy and publish time. Published Shorts retain their parent-production identity while their analytics use a separate Shorts baseline.
+
 ### Review research and provenance
 
 Every production has an **Evidence desk** inside Review Studio. Autonomous research carries exact YouTube source metadata into the production, while AI-generated scripts list the factual claims that need review. Add any official articles, datasets, asset licenses, or other evidence that the script needs, verify each source, and connect it to the claims it supports.
@@ -90,6 +111,12 @@ After publication, Lumen captures comparable 24-hour and 7-day performance snaps
 Open **Analytics → What the agent learned** to review the evidence and confidence behind each recommendation. Pending or rejected recommendations never influence generation. Once you approve one, the next Autonomous Channel Operator run includes it as an explicit planning constraint. Simulated analytics fallbacks are stored as unverified and are never eligible for baselines or recommendations.
 
 When an approved learning calls for better packaging, Lumen prepares a control plus title and thumbnail variants for new videos. Review Studio shows those options before approval; the selected combination is the only one handed to the publishing queue. Lumen does not silently swap live YouTube metadata.
+
+### Find the exact scene that lost viewers
+
+At each real analytics window, AgentTube also requests YouTube's audience-retention curve and maps its 100 elapsed-time points onto the stored scene durations. Open **Analytics → Scene-aware retention** to see the curve divided by scene, compare absolute and relative retention, and inspect drop-off, rewatch, strong-hold, or steady signals for each beat.
+
+Retention snapshots are stored separately for long-form videos and Shorts. Missing, sparse, or simulated curves never enter this evidence layer. A scene finding creates a pending learning recommendation; it cannot guide future scripts, pacing, or scene structure until the operator approves it, and AgentTube never rewrites a published video. Use **Refresh curve** for a read-only update from YouTube Analytics, or `GET /api/retention/:videoId` to inspect stored evidence.
 
 ## From idea to published video
 

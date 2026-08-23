@@ -30,11 +30,9 @@ class OperatorService {
       this.check('thumbnail', Boolean(thumbnail?.path),
         thumbnail?.path ? 'Thumbnail asset is present' : 'Thumbnail asset is missing', false),
       this.check('video', Boolean(finalVideo?.path && !finalVideo?.simulated),
-        finalVideo?.path && !finalVideo?.simulated
-          ? 'Final MP4 is present'
-          : finalVideo?.simulated
-            ? 'Only a simulated video was produced'
-            : 'Final MP4 is missing')
+        finalVideo?.simulated
+          ? 'Only a simulated video was produced'
+          : finalVideo?.path ? 'Final MP4 is ready' : 'Final MP4 is missing')
     ];
 
     const topic = String(production.strategy?.topic || '').trim();
@@ -57,6 +55,32 @@ class OperatorService {
         'Final video file exists on disk'));
     }
 
+    const audio = production.assets?.audio || {};
+    const intentionalSilence = audio.intentionalSilence === true &&
+      String(audio.silenceReason || '').trim().length >= 10 &&
+      Boolean(audio.silenceConfirmedAt);
+    const productionAudioReady = !audio.simulated && await this.fileExists(audio.path);
+    const scenes = production.scenes || [];
+    let sceneAudioReady = false;
+    if (scenes.length) {
+      const readiness = [];
+      for (const scene of scenes) {
+        readiness.push(scene.narrationStatus === 'intentional_silence' || (
+          scene.narrationStatus === 'current' && await this.fileExists(scene.audioPath)
+        ));
+      }
+      sceneAudioReady = readiness.every(Boolean);
+    }
+    const narrationReady = intentionalSilence || productionAudioReady || sceneAudioReady;
+    checks.push(this.check('narration', narrationReady,
+      intentionalSilence
+        ? `Intentional silence confirmed: ${audio.silenceReason}`
+        : narrationReady
+          ? `Narration is ready${audio.provider ? ` via ${audio.provider}` : ''}`
+          : audio.intentionalSilence
+            ? 'Intentional silence requires an operator confirmation and reason of at least 10 characters'
+            : 'Narration is missing or unusable; regenerate it before approval'));
+
     const matchedBannedTopics = bannedTopics.filter(topic =>
       topic && combinedText.includes(String(topic).toLowerCase())
     );
@@ -74,6 +98,22 @@ class OperatorService {
         : provenance.status === 'not_required'
           ? 'No externally verifiable factual claims were declared'
           : `${unresolved} factual claim${unresolved === 1 ? '' : 's'} still require evidence review`));
+
+    if (scenes.length) {
+      const invalidScenes = scenes.filter(scene =>
+        !scene.assetPath || ['missing_asset', 'failed', 'generating', 'needs_rebuild', 'visual_stale'].includes(scene.status) ||
+        !['current', 'intentional_silence'].includes(scene.narrationStatus)
+      );
+      const unlicensedUploads = scenes.filter(scene => scene.assetOrigin === 'uploaded' && !scene.rightsConfirmed);
+      checks.push(this.check('scene_integrity', invalidScenes.length === 0,
+        invalidScenes.length === 0
+          ? `${scenes.length} scene${scenes.length === 1 ? '' : 's'} are rebuilt and current`
+          : `${invalidScenes.length} scene${invalidScenes.length === 1 ? '' : 's'} still require repair or rebuild`));
+      checks.push(this.check('scene_rights', unlicensedUploads.length === 0,
+        unlicensedUploads.length === 0
+          ? 'Replacement scene assets have rights confirmation'
+          : `${unlicensedUploads.length} uploaded scene asset${unlicensedUploads.length === 1 ? '' : 's'} lack rights confirmation`));
+    }
 
     const blockingFailures = checks.filter(check => check.blocking && !check.passed);
     return {
