@@ -35,13 +35,19 @@ class Database {
   async migrate() {
     let version = this.db.pragma('user_version', { simple: true });
 
+    // createTables() is exclusively CREATE TABLE IF NOT EXISTS / INSERT OR
+    // IGNORE / column-existence-checked ALTER statements, so it's safe and
+    // cheap to run on every boot. New tables added later then just show up —
+    // they no longer need a matching version bump to backfill onto databases
+    // that already migrated past the version where the table was introduced
+    // (this bit us twice: operator_runs/channel_strategies/... at v1->v2, then
+    // retention_snapshots/production_scenes/shorts_clips going unnoticed
+    // because nothing bumped the version when they were added upstream).
+    await this.createTables();
+
     const migrations = [
-      /* v1 */ async () => { await this.createTables(); },
-      // createTables() gained several tables (operator_runs, channel_strategies,
-      // readiness_runs, content_provenance, ...) after some databases had already
-      // reached v1. Every statement in it is CREATE TABLE IF NOT EXISTS, so
-      // re-running it here is a safe, idempotent way to backfill those tables.
-      /* v2 */ async () => { await this.createTables(); },
+      /* v1 */ async () => {},
+      /* v2 */ async () => {},
       // publish_schedule originally had a FOREIGN KEY (production_id) REFERENCES
       // productions(id), but Shorts schedule entries store the short clip's own
       // id there, which never gets a `productions` row — only the parent video
