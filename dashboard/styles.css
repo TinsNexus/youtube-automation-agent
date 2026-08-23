@@ -187,7 +187,7 @@ label small { color: var(--muted); font-weight: 400; }
 .dialog-heading { display: flex; align-items: start; justify-content: space-between; }
 .dialog-heading h2 { font-size: 27px; }
 .content-dialog { width: min(1080px, calc(100vw - 30px)); max-height: calc(100vh - 30px); overflow: auto; }
-.setup-wizard-dialog { display: grid; gap: 18px; }
+.setup-wizard-dialog[open] { display: grid; gap: 18px; }
 .wizard-step { display: none; }
 .wizard-step.active { display: grid; gap: 14px; }
 .callout { background: rgba(114,165,255,.08); border: 1px solid rgba(114,165,255,.18); padding: 12px; border-radius: 10px; color: #b9d0fb; font-size: 12px; margin: 0; }
