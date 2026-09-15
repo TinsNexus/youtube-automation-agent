@@ -16,9 +16,11 @@
       </a>
       <nav aria-label="Main navigation">
         <button class="nav-item active" data-view="overview"><span>⌂</span> Overview</button>
+        <button class="nav-item" data-view="operator"><span>◎</span> Autonomous operator</button>
         <button class="nav-item" data-view="pipeline"><span>≋</span> Pipeline <b id="review-badge" class="badge hidden">0</b></button>
         <button class="nav-item" data-view="calendar"><span>□</span> Calendar & ideas</button>
         <button class="nav-item" data-view="analytics"><span>⌁</span> Analytics</button>
+        <button class="nav-item" data-view="readiness"><span>✓</span> Production readiness</button>
         <button class="nav-item" data-view="settings"><span>⚙</span> Channel setup</button>
       </nav>
       <div class="sidebar-footer">
@@ -74,6 +76,39 @@
         </div>
       </section>
 
+      <section id="operator-view" class="view">
+        <div class="section-intro"><div><h2>Autonomous Channel Operator</h2><p>Set the destination once. Lumen researches, plans, produces, and manages the channel workflow around it.</p></div><span id="operator-strategy-status" class="status">Not configured</span></div>
+        <div class="operator-grid">
+          <form id="strategy-form" class="panel settings-form">
+            <div class="panel-heading"><div><p class="eyebrow">CHANNEL MANDATE</p><h2>What should this channel achieve?</h2></div></div>
+            <div class="form-grid">
+              <label class="full-row"><span>Objective</span><textarea name="objective" rows="3" maxlength="1000" placeholder="Become the most trusted practical channel for small businesses adopting AI." required></textarea></label>
+              <label class="full-row"><span>Audience</span><textarea name="audience" rows="2" maxlength="500" placeholder="Owners and operators at 5–50 person service businesses" required></textarea></label>
+              <label class="full-row"><span>Value proposition</span><textarea name="valueProposition" rows="2" maxlength="1000" placeholder="Clear, tested advice viewers can apply this week"></textarea></label>
+              <label class="full-row"><span>Content pillars</span><input name="contentPillars" placeholder="AI workflows, automation playbooks, tool reviews" required><small>Separate 1–8 durable themes with commas.</small></label>
+              <label><span>Videos per week</span><input name="cadencePerWeek" type="number" min="1" max="7" value="1"></label>
+              <label><span>Videos per planning run</span><input name="videosPerRun" type="number" min="1" max="5" value="1"></label>
+              <label><span>Default format</span><select name="defaultFormat"><option value="explainer">Explainer</option><option value="tutorial">Tutorial</option><option value="list">List</option><option value="review">Review</option><option value="story">Story</option></select></label>
+              <label><span>Default length</span><select name="defaultLength"><option value="short">Short · 2–4 min</option><option value="medium">Medium · 8–12 min</option><option value="long">Long · 15–20 min</option></select></label>
+              <label class="full-row"><span>Success metric</span><input name="successMetric" maxlength="300" placeholder="Qualified subscribers and returning viewers"></label>
+              <label class="full-row"><span>Boundaries and constraints</span><textarea name="constraints" rows="3" maxlength="2000" placeholder="No hype, no unverified statistics, explain costs and tradeoffs."></textarea></label>
+            </div>
+            <p class="callout">The operator uses YouTube trend signals, configured competitors, and channel history. Publishing still obeys your quality, factual-review, rights, and approval gates.</p>
+            <div class="form-actions"><button type="submit" class="button secondary">Save strategy</button><button id="activate-operator-button" type="button" class="button primary">Activate & run now</button><button id="pause-operator-button" type="button" class="button danger hidden">Pause operator</button></div>
+          </form>
+          <div class="operator-side">
+            <article class="panel">
+              <div class="panel-heading"><div><p class="eyebrow">CURRENT RUN</p><h2 id="operator-run-title">Waiting for a strategy</h2></div><div class="run-actions"><button id="resume-operator-run" class="text-button approve hidden">Resume run</button><button id="cancel-operator-run" class="text-button hidden">Stop run</button></div></div>
+              <div id="operator-run-summary"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><div><p class="eyebrow">EDITORIAL PLAN</p><h2>What Lumen decided to make</h2></div></div>
+              <div id="operator-plan" class="plan-list"></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
       <section id="pipeline-view" class="view">
         <div class="section-intro"><div><h2>Content pipeline</h2><p>Every generated video, its real state, and the next available action.</p></div><select id="pipeline-filter"><option value="all">All content</option><option value="needs_review">Needs review</option><option value="needs_attention">Needs attention</option><option value="approved">Approved</option><option value="published">Published</option></select></div>
         <div id="pipeline-list" class="pipeline-list"></div>
@@ -94,8 +129,55 @@
           <article class="stat"><span>Performance score</span><strong id="analytics-score">—</strong><small>channel average</small></article>
           <article class="stat wide"><span>Recommended action</span><strong id="analytics-action" class="recommendation">Collecting enough data to recommend a move.</strong></article>
         </div>
+        <div class="learning-grid">
+          <article class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">CHANNEL BASELINE</p><h2>What real results say</h2></div><span id="learning-snapshot-count" class="status">0 snapshots</span></div>
+            <div id="learning-baseline" class="baseline-grid"></div>
+            <p class="callout">Only real YouTube analytics enter this evidence layer. Simulated fallback data is excluded.</p>
+          </article>
+          <article class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">WHAT THE AGENT LEARNED</p><h2>Review recommendations</h2></div><span id="learning-approved-count" class="status">0 approved</span></div>
+            <div id="learning-recommendations" class="learning-list"></div>
+          </article>
+        </div>
+        <article class="panel retention-studio">
+          <div class="panel-heading retention-heading">
+            <div><p class="eyebrow">SCENE-AWARE RETENTION</p><h2>Where viewers stay—and leave</h2><p>Real YouTube retention points mapped onto the exact production timeline.</p></div>
+            <div class="retention-controls">
+              <label><span class="sr-only">Retention snapshot</span><select id="retention-snapshot-select" aria-label="Choose a retention snapshot"></select></label>
+              <button id="refresh-retention-button" class="button secondary small" disabled>Refresh curve</button>
+            </div>
+          </div>
+          <div id="retention-meta" class="scene-summary"></div>
+          <div id="retention-chart" class="retention-chart"></div>
+          <div id="retention-scenes" class="retention-scene-list"></div>
+          <p class="callout retention-policy">Scene findings remain evidence only. They influence future scripts and pacing only after their recommendation is approved above; published videos are never edited automatically.</p>
+        </article>
         <article class="panel"><div class="panel-heading"><div><p class="eyebrow">TOP PERFORMERS</p><h2>What is working</h2></div></div><div id="top-performers" class="card-list"></div></article>
         <article class="panel activation-panel"><div class="panel-heading"><div><p class="eyebrow">LOCAL ACTIVATION</p><h2>First-run journey</h2></div></div><p class="callout">Calculated locally from your database and video files. Nothing is transmitted unless anonymous telemetry is explicitly enabled.</p><div id="activation-list" class="timeline"></div></article>
+      </section>
+
+      <section id="readiness-view" class="view">
+        <div class="section-intro readiness-intro">
+          <div><h2>Production readiness</h2><p>Verify the real path from providers to a publishable YouTube upload before autonomy spends time or credits.</p></div>
+          <span id="readiness-status" class="status unverified">Unverified</span>
+        </div>
+        <article class="panel readiness-hero">
+          <div>
+            <p class="eyebrow">VERIFIED DRY RUN</p>
+            <h2 id="readiness-title">Prove the pipeline, without uploading.</h2>
+            <p id="readiness-summary">The check makes small live text and narration requests, verifies channel access, builds a local audio/video MP4, and validates queued metadata. It never creates or uploads a YouTube video.</p>
+            <div id="readiness-meta" class="meta-line">No readiness run recorded.</div>
+          </div>
+          <div class="readiness-actions">
+            <label class="toggle paid-probe"><input id="paid-image-probe" type="checkbox"><span></span> Include paid image probe</label>
+            <label class="toggle paid-probe"><input id="paid-video-probe" type="checkbox"><span></span> Include paid video probe</label>
+            <button id="run-readiness-button" class="button primary">Run verified check</button>
+            <small>Live provider probes can consume a small amount of quota or credits.</small>
+          </div>
+        </article>
+        <div id="readiness-checks" class="readiness-grid"></div>
+        <p class="callout readiness-policy">A recorded blocking failure stops autonomous generation and publishing until a later run passes. An unverified or stale result remains visible but does not interrupt manual work.</p>
       </section>
 
       <section id="settings-view" class="view">
@@ -115,6 +197,12 @@
           <div class="settings-row">
             <label class="toggle"><input id="approval-required" type="checkbox"><span></span> Require approval before scheduling</label>
             <label class="toggle"><input id="notifications-enabled" type="checkbox"><span></span> Save operator notifications</label>
+          </div>
+          <div class="form-grid video-provider-settings">
+            <label><span>Video provider</span><select name="videoProvider"><option value="slideshow">Local slideshow · no provider cost</option><option value="auto">Automatic capability routing</option><option value="seedance">ByteDance Seedance 2.5</option><option value="minimax_h3">MiniMax H3</option><option value="google_omni">Google Gemini Omni Flash</option><option value="kling">Kuaishou Kling 3.0 Omni</option><option value="wan">Alibaba Wan 2.7</option></select><small id="video-provider-status">Provider credentials are checked at runtime.</small></label>
+            <label><span>Generation mode</span><select name="videoGenerationMode"><option value="hybrid">Hybrid · generated clips + local assembly</option><option value="slideshow">Local slideshow only</option></select></label>
+            <label><span>Clip duration</span><input name="videoClipDuration" type="number" min="3" max="30" step="1"></label>
+            <label><span>Paid seconds cap</span><input name="videoMaxGeneratedSeconds" type="number" min="0" max="600" step="1"><small>Maximum provider-generated seconds per production.</small></label>
           </div>
           <div class="form-actions"><button type="submit" class="button primary">Save channel setup</button><button id="api-key-button" type="button" class="button secondary">Set dashboard API key</button></div>
         </form>
