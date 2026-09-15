@@ -177,6 +177,60 @@ class Database {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         reviewed_at TEXT
       )`,
+      `CREATE TABLE IF NOT EXISTS growth_experiments (
+        id TEXT PRIMARY KEY,
+        production_id TEXT NOT NULL,
+        video_id TEXT NOT NULL,
+        recommendation_id TEXT,
+        title TEXT NOT NULL,
+        hypothesis TEXT NOT NULL,
+        primary_metric TEXT NOT NULL DEFAULT 'ctr',
+        status TEXT NOT NULL DEFAULT 'draft',
+        arm_duration_hours INTEGER NOT NULL DEFAULT 48,
+        min_impressions INTEGER NOT NULL DEFAULT 1000,
+        guardrails TEXT NOT NULL DEFAULT '{}',
+        current_arm_id TEXT,
+        winning_arm_id TEXT,
+        result TEXT NOT NULL DEFAULT '{}',
+        approved_at TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        adopted_at TEXT,
+        cancelled_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (production_id) REFERENCES productions(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS experiment_arms (
+        id TEXT PRIMARY KEY,
+        experiment_id TEXT NOT NULL,
+        arm_index INTEGER NOT NULL,
+        label TEXT NOT NULL,
+        title TEXT NOT NULL,
+        thumbnail_path TEXT NOT NULL,
+        is_control INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        baseline_metrics TEXT NOT NULL DEFAULT '{}',
+        final_metrics TEXT NOT NULL DEFAULT '{}',
+        result TEXT NOT NULL DEFAULT '{}',
+        started_at TEXT,
+        ended_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(experiment_id, arm_index),
+        FOREIGN KEY (experiment_id) REFERENCES growth_experiments(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS experiment_samples (
+        id TEXT PRIMARY KEY,
+        experiment_id TEXT NOT NULL,
+        arm_id TEXT NOT NULL,
+        metrics TEXT NOT NULL,
+        traffic_sources TEXT NOT NULL DEFAULT '[]',
+        captured_at TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (experiment_id) REFERENCES growth_experiments(id),
+        FOREIGN KEY (arm_id) REFERENCES experiment_arms(id)
+      )`,
       `CREATE TABLE IF NOT EXISTS retention_snapshots (
         id TEXT PRIMARY KEY,
         video_id TEXT NOT NULL,
@@ -194,7 +248,58 @@ class Database {
         measured_at TEXT DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(video_id, measurement_window)
       )`,
-      
+
+      `CREATE TABLE IF NOT EXISTS audience_comments (
+        id TEXT PRIMARY KEY,
+        comment_id TEXT NOT NULL UNIQUE,
+        video_id TEXT NOT NULL,
+        parent_comment_id TEXT,
+        author_name TEXT,
+        author_channel_id TEXT,
+        is_channel_owner INTEGER DEFAULT 0,
+        text TEXT NOT NULL,
+        like_count INTEGER DEFAULT 0,
+        reply_count INTEGER DEFAULT 0,
+        published_at TEXT,
+        updated_at_youtube TEXT,
+        flags TEXT NOT NULL DEFAULT '[]',
+        analysis_state TEXT DEFAULT 'pending',
+        replied_by_agent INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS engagement_insights (
+        id TEXT PRIMARY KEY,
+        video_id TEXT NOT NULL UNIQUE,
+        production_id TEXT,
+        title TEXT,
+        comment_count INTEGER DEFAULT 0,
+        analyzed_count INTEGER DEFAULT 0,
+        sentiment TEXT NOT NULL DEFAULT '{}',
+        themes TEXT NOT NULL DEFAULT '[]',
+        attention_flags TEXT NOT NULL DEFAULT '[]',
+        analysis_method TEXT DEFAULT 'ai',
+        analyzed_at TEXT,
+        last_synced_at TEXT,
+        newest_comment_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS reply_drafts (
+        id TEXT PRIMARY KEY,
+        comment_id TEXT NOT NULL UNIQUE,
+        video_id TEXT NOT NULL,
+        draft_text TEXT NOT NULL,
+        edited_text TEXT,
+        status TEXT DEFAULT 'proposed',
+        rationale TEXT,
+        posted_comment_id TEXT,
+        posted_at TEXT,
+        failure_reason TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )`,
+
       // Keywords Performance
       `CREATE TABLE IF NOT EXISTS keyword_performance (
         id TEXT PRIMARY KEY,
@@ -315,6 +420,41 @@ class Database {
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (production_id) REFERENCES productions(id)
       )`,
+      `CREATE TABLE IF NOT EXISTS discoverability_audits (
+        id TEXT PRIMARY KEY,
+        production_id TEXT NOT NULL,
+        platform TEXT NOT NULL DEFAULT 'youtube',
+        mode TEXT NOT NULL DEFAULT 'content',
+        engine TEXT NOT NULL DEFAULT 'darkzseo',
+        engine_version TEXT,
+        schema_version TEXT,
+        status TEXT NOT NULL,
+        summary TEXT NOT NULL DEFAULT '{}',
+        error_code TEXT,
+        error TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (production_id) REFERENCES productions(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS discoverability_findings (
+        id TEXT PRIMARY KEY,
+        audit_id TEXT NOT NULL,
+        rule_id TEXT NOT NULL,
+        category TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        applicability TEXT NOT NULL DEFAULT '[]',
+        message TEXT NOT NULL,
+        remediation TEXT,
+        fingerprint TEXT NOT NULL,
+        review_status TEXT NOT NULL DEFAULT 'pending',
+        review_reason TEXT,
+        reviewed_at TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (audit_id) REFERENCES discoverability_audits(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_discoverability_audits_production
+       ON discoverability_audits(production_id, platform, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_discoverability_findings_audit
+       ON discoverability_findings(audit_id, severity, review_status)`,
       `CREATE TABLE IF NOT EXISTS production_scenes (
         id TEXT PRIMARY KEY,
         production_id TEXT NOT NULL,
@@ -430,6 +570,11 @@ class Database {
         default_format TEXT DEFAULT 'explainer',
         default_length TEXT DEFAULT 'medium',
         success_metric TEXT,
+        primary_kpi TEXT DEFAULT 'views',
+        target_value REAL,
+        target_window_days INTEGER DEFAULT 28,
+        monthly_budget REAL,
+        outcome_currency TEXT DEFAULT 'USD',
         constraints TEXT,
         status TEXT DEFAULT 'draft',
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -492,13 +637,23 @@ class Database {
       narration_generated_at: 'TEXT',
       narration_cost: "TEXT NOT NULL DEFAULT '{}'"
     });
+    await this.ensureColumns('channel_strategies', {
+      primary_kpi: "TEXT DEFAULT 'views'",
+      target_value: 'REAL',
+      target_window_days: 'INTEGER DEFAULT 28',
+      monthly_budget: 'REAL',
+      outcome_currency: "TEXT DEFAULT 'USD'"
+    });
+    await this.ensureColumns('discoverability_audits', {
+      error_code: 'TEXT'
+    });
 
     // Insert default settings
     await this.insertDefaultSettings();
   }
 
   async ensureColumns(tableName, columns) {
-    const allowedTables = new Set(['production_scenes']);
+    const allowedTables = new Set(['production_scenes', 'channel_strategies', 'discoverability_audits']);
     if (!allowedTables.has(tableName)) throw new Error(`Unsupported migration table: ${tableName}`);
     const existing = new Set((await this.getAllRows(`PRAGMA table_info(${tableName})`)).map(column => column.name));
     for (const [columnName, definition] of Object.entries(columns)) {
@@ -740,6 +895,7 @@ class Database {
       [productionId]
     );
     const provenance = await this.getContentProvenance(productionId);
+    const discoverability = await this.getLatestDiscoverabilityAudit(productionId, 'youtube');
     const scenes = await this.listProductionScenes(productionId);
     const sceneRevisions = scenes.length ? await this.listProductionSceneRevisions(productionId, 50) : [];
     const shorts = await this.listShortClips(productionId);
@@ -758,6 +914,7 @@ class Database {
         sources: [], claims: [], containsSyntheticMedia: false, status: 'not_required',
         summary: { sourceCount: 0, verifiedSources: 0, claimCount: 0, resolvedClaims: 0, highRiskClaims: 0, unresolvedClaims: 0 }
       },
+      discoverability,
       scenes,
       sceneRevisions,
       shorts
@@ -1278,6 +1435,133 @@ class Database {
     } : null;
   }
 
+  async saveDiscoverabilityAudit(productionId, platform, report = {}) {
+    const auditId = this.generateId('discoverability');
+    const findings = Array.isArray(report.findings) ? report.findings : [];
+    await this.executeQuery('BEGIN TRANSACTION');
+    try {
+      await this.executeQuery(
+        `INSERT INTO discoverability_audits (
+          id, production_id, platform, mode, engine, engine_version,
+          schema_version, status, summary, error_code, error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          auditId,
+          productionId,
+          platform || 'youtube',
+          report.mode || 'content',
+          report.engine?.name || 'darkzseo',
+          report.engine?.version || null,
+          report.schemaVersion || null,
+          report.status || 'unavailable',
+          JSON.stringify(report.summary || {}),
+          report.errorCode || null,
+          report.error || null
+        ]
+      );
+
+      for (const finding of findings) {
+        const previous = await this.getRow(
+          `SELECT df.review_status, df.review_reason, df.reviewed_at
+           FROM discoverability_findings df
+           JOIN discoverability_audits da ON da.id = df.audit_id
+           WHERE da.production_id = ? AND da.platform = ? AND df.fingerprint = ?
+           ORDER BY df.created_at DESC, df.rowid DESC LIMIT 1`,
+          [productionId, platform || 'youtube', finding.fingerprint]
+        );
+        await this.executeQuery(
+          `INSERT INTO discoverability_findings (
+            id, audit_id, rule_id, category, severity, applicability,
+            message, remediation, fingerprint, review_status, review_reason, reviewed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            this.generateId('finding'), auditId, finding.ruleId, finding.category,
+            finding.severity, JSON.stringify(finding.applicability || []), finding.message,
+            finding.remediation || null, finding.fingerprint,
+            previous?.review_status || 'pending', previous?.review_reason || null,
+            previous?.reviewed_at || null
+          ]
+        );
+      }
+      await this.executeQuery('COMMIT');
+    } catch (error) {
+      await this.executeQuery('ROLLBACK');
+      throw error;
+    }
+    return this.getDiscoverabilityAudit(auditId);
+  }
+
+  async getDiscoverabilityAudit(auditId) {
+    const row = await this.getRow('SELECT * FROM discoverability_audits WHERE id = ?', [auditId]);
+    if (!row) return null;
+    const findings = await this.getAllRows(
+      'SELECT * FROM discoverability_findings WHERE audit_id = ? ORDER BY CASE severity WHEN \'CRITICAL\' THEN 0 WHEN \'HIGH\' THEN 1 WHEN \'MEDIUM\' THEN 2 WHEN \'LOW\' THEN 3 ELSE 4 END, created_at ASC',
+      [auditId]
+    );
+    return this.deserializeDiscoverabilityAudit(row, findings);
+  }
+
+  async getLatestDiscoverabilityAudit(productionId, platform = 'youtube') {
+    const row = await this.getRow(
+      `SELECT * FROM discoverability_audits
+       WHERE production_id = ? AND platform = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+      [productionId, platform]
+    );
+    if (!row) return null;
+    const findings = await this.getAllRows(
+      'SELECT * FROM discoverability_findings WHERE audit_id = ? ORDER BY CASE severity WHEN \'CRITICAL\' THEN 0 WHEN \'HIGH\' THEN 1 WHEN \'MEDIUM\' THEN 2 WHEN \'LOW\' THEN 3 ELSE 4 END, created_at ASC',
+      [row.id]
+    );
+    return this.deserializeDiscoverabilityAudit(row, findings);
+  }
+
+  deserializeDiscoverabilityAudit(row, findings = []) {
+    const parsedFindings = findings.map(finding => ({
+      ...finding,
+      ruleId: finding.rule_id,
+      applicability: JSON.parse(finding.applicability || '[]'),
+      reviewStatus: finding.review_status,
+      reviewReason: finding.review_reason,
+      reviewedAt: finding.reviewed_at
+    }));
+    return {
+      ...row,
+      productionId: row.production_id,
+      engineVersion: row.engine_version,
+      schemaVersion: row.schema_version,
+      errorCode: row.error_code,
+      summary: JSON.parse(row.summary || '{}'),
+      findings: parsedFindings,
+      pendingCount: parsedFindings.filter(finding => finding.reviewStatus === 'pending').length
+    };
+  }
+
+  async getDiscoverabilityFinding(findingId) {
+    const row = await this.getRow(
+      `SELECT df.*, da.production_id, da.platform
+       FROM discoverability_findings df
+       JOIN discoverability_audits da ON da.id = df.audit_id WHERE df.id = ?`,
+      [findingId]
+    );
+    return row ? {
+      ...row,
+      ruleId: row.rule_id,
+      applicability: JSON.parse(row.applicability || '[]'),
+      reviewStatus: row.review_status,
+      reviewReason: row.review_reason,
+      reviewedAt: row.reviewed_at
+    } : null;
+  }
+
+  async reviewDiscoverabilityFinding(findingId, status, reason) {
+    await this.executeQuery(
+      `UPDATE discoverability_findings SET review_status = ?, review_reason = ?, reviewed_at = datetime('now')
+       WHERE id = ?`,
+      [status, reason || null, findingId]
+    );
+    return this.getDiscoverabilityFinding(findingId);
+  }
+
   async getChannelProfile() {
     const row = await this.getRow("SELECT * FROM channel_profiles WHERE id = 'default'");
     return row ? { ...row, bannedTopics: JSON.parse(row.banned_topics || '[]') } : null;
@@ -1349,15 +1633,19 @@ class Database {
     await this.executeQuery(
       `INSERT INTO channel_strategies (
         id, objective, audience, value_proposition, content_pillars, cadence_per_week,
-        videos_per_run, default_format, default_length, success_metric, constraints,
+        videos_per_run, default_format, default_length, success_metric, primary_kpi,
+        target_value, target_window_days, monthly_budget, outcome_currency, constraints,
         status, created_at, updated_at
-      ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'))
+      ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'))
       ON CONFLICT(id) DO UPDATE SET
         objective = excluded.objective, audience = excluded.audience,
         value_proposition = excluded.value_proposition, content_pillars = excluded.content_pillars,
         cadence_per_week = excluded.cadence_per_week, videos_per_run = excluded.videos_per_run,
         default_format = excluded.default_format, default_length = excluded.default_length,
-        success_metric = excluded.success_metric, constraints = excluded.constraints,
+        success_metric = excluded.success_metric, primary_kpi = excluded.primary_kpi,
+        target_value = excluded.target_value, target_window_days = excluded.target_window_days,
+        monthly_budget = excluded.monthly_budget, outcome_currency = excluded.outcome_currency,
+        constraints = excluded.constraints,
         status = excluded.status, updated_at = datetime('now')`,
       [
         strategy.objective ?? current.objective ?? '',
@@ -1369,6 +1657,11 @@ class Database {
         strategy.defaultFormat ?? current.default_format ?? 'explainer',
         strategy.defaultLength ?? current.default_length ?? 'medium',
         strategy.successMetric ?? current.success_metric ?? '',
+        strategy.primaryKpi ?? current.primary_kpi ?? 'views',
+        strategy.targetValue ?? current.target_value ?? null,
+        strategy.targetWindowDays ?? current.target_window_days ?? 28,
+        strategy.monthlyBudget ?? current.monthly_budget ?? null,
+        strategy.outcomeCurrency ?? current.outcome_currency ?? 'USD',
         strategy.constraints ?? current.constraints ?? '',
         strategy.status ?? current.status ?? 'draft',
         current.created_at || null
@@ -1858,6 +2151,458 @@ class Database {
     };
   }
 
+  async createGrowthExperiment(experiment, arms) {
+    const id = experiment.id || this.generateId('experiment');
+    await this.executeQuery(
+      `INSERT INTO growth_experiments (
+        id, production_id, video_id, recommendation_id, title, hypothesis,
+        primary_metric, status, arm_duration_hours, min_impressions, guardrails
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id, experiment.productionId, experiment.videoId, experiment.recommendationId || null,
+        experiment.title, experiment.hypothesis, experiment.primaryMetric || 'ctr',
+        experiment.status || 'draft', experiment.armDurationHours || 48,
+        experiment.minImpressions || 1000, JSON.stringify(experiment.guardrails || {})
+      ]
+    );
+    for (const [index, arm] of arms.entries()) {
+      await this.executeQuery(
+        `INSERT INTO experiment_arms (
+          id, experiment_id, arm_index, label, title, thumbnail_path, is_control
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          arm.id || this.generateId('arm'), id, index, arm.label,
+          arm.title, arm.thumbnailPath, arm.isControl ? 1 : 0
+        ]
+      );
+    }
+    return this.getGrowthExperiment(id);
+  }
+
+  async getGrowthExperiment(id) {
+    const row = await this.getRow('SELECT * FROM growth_experiments WHERE id = ?', [id]);
+    if (!row) return null;
+    const arms = await this.getAllRows(
+      'SELECT * FROM experiment_arms WHERE experiment_id = ? ORDER BY arm_index ASC',
+      [id]
+    );
+    return this.parseGrowthExperiment(row, arms);
+  }
+
+  async listGrowthExperiments(options = {}) {
+    const conditions = [];
+    const params = [];
+    if (options.status) {
+      const statuses = Array.isArray(options.status) ? options.status : [options.status];
+      conditions.push(`status IN (${statuses.map(() => '?').join(', ')})`);
+      params.push(...statuses);
+    }
+    if (options.productionId) {
+      conditions.push('production_id = ?');
+      params.push(options.productionId);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const limit = Math.max(1, Math.min(100, Number(options.limit || 25)));
+    const rows = await this.getAllRows(
+      `SELECT * FROM growth_experiments ${where} ORDER BY updated_at DESC LIMIT ?`,
+      [...params, limit]
+    );
+    return Promise.all(rows.map(async row => {
+      const arms = await this.getAllRows(
+        'SELECT * FROM experiment_arms WHERE experiment_id = ? ORDER BY arm_index ASC',
+        [row.id]
+      );
+      return this.parseGrowthExperiment(row, arms);
+    }));
+  }
+
+  async updateGrowthExperiment(id, changes = {}) {
+    const allowed = {
+      status: 'status', currentArmId: 'current_arm_id', winningArmId: 'winning_arm_id',
+      result: 'result', approvedAt: 'approved_at', startedAt: 'started_at',
+      completedAt: 'completed_at', adoptedAt: 'adopted_at', cancelledAt: 'cancelled_at'
+    };
+    const assignments = [];
+    const params = [];
+    for (const [key, column] of Object.entries(allowed)) {
+      if (changes[key] === undefined) continue;
+      assignments.push(`${column} = ?`);
+      params.push(key === 'result' ? JSON.stringify(changes[key] || {}) : changes[key]);
+    }
+    if (!assignments.length) return this.getGrowthExperiment(id);
+    assignments.push('updated_at = CURRENT_TIMESTAMP');
+    await this.executeQuery(
+      `UPDATE growth_experiments SET ${assignments.join(', ')} WHERE id = ?`,
+      [...params, id]
+    );
+    return this.getGrowthExperiment(id);
+  }
+
+  async updateExperimentArm(id, changes = {}) {
+    const allowed = {
+      status: 'status', baselineMetrics: 'baseline_metrics', finalMetrics: 'final_metrics',
+      result: 'result', startedAt: 'started_at', endedAt: 'ended_at'
+    };
+    const assignments = [];
+    const params = [];
+    for (const [key, column] of Object.entries(allowed)) {
+      if (changes[key] === undefined) continue;
+      assignments.push(`${column} = ?`);
+      params.push(['baselineMetrics', 'finalMetrics', 'result'].includes(key)
+        ? JSON.stringify(changes[key] || {})
+        : changes[key]);
+    }
+    if (!assignments.length) return null;
+    assignments.push('updated_at = CURRENT_TIMESTAMP');
+    await this.executeQuery(`UPDATE experiment_arms SET ${assignments.join(', ')} WHERE id = ?`, [...params, id]);
+    const row = await this.getRow('SELECT * FROM experiment_arms WHERE id = ?', [id]);
+    return this.parseExperimentArm(row);
+  }
+
+  async saveExperimentSample(sample) {
+    const id = this.generateId('sample');
+    await this.executeQuery(
+      `INSERT INTO experiment_samples (
+        id, experiment_id, arm_id, metrics, traffic_sources, captured_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        id, sample.experimentId, sample.armId, JSON.stringify(sample.metrics || {}),
+        JSON.stringify(sample.trafficSources || []), sample.capturedAt || new Date().toISOString()
+      ]
+    );
+    return id;
+  }
+
+  async listExperimentSamples(experimentId, limit = 250) {
+    const rows = await this.getAllRows(
+      `SELECT * FROM experiment_samples WHERE experiment_id = ?
+       ORDER BY captured_at ASC LIMIT ?`,
+      [experimentId, Math.max(1, Math.min(1000, Number(limit || 250)))]
+    );
+    return rows.map(row => ({
+      ...row,
+      experimentId: row.experiment_id,
+      armId: row.arm_id,
+      capturedAt: row.captured_at,
+      metrics: JSON.parse(row.metrics || '{}'),
+      trafficSources: JSON.parse(row.traffic_sources || '[]')
+    }));
+  }
+
+  parseExperimentArm(row) {
+    if (!row) return null;
+    return {
+      ...row,
+      experimentId: row.experiment_id,
+      index: Number(row.arm_index),
+      thumbnailPath: row.thumbnail_path,
+      isControl: Boolean(row.is_control),
+      baselineMetrics: JSON.parse(row.baseline_metrics || '{}'),
+      finalMetrics: JSON.parse(row.final_metrics || '{}'),
+      result: JSON.parse(row.result || '{}'),
+      startedAt: row.started_at,
+      endedAt: row.ended_at
+    };
+  }
+
+  parseGrowthExperiment(row, arms = []) {
+    return {
+      ...row,
+      productionId: row.production_id,
+      videoId: row.video_id,
+      recommendationId: row.recommendation_id,
+      primaryMetric: row.primary_metric,
+      armDurationHours: Number(row.arm_duration_hours),
+      minImpressions: Number(row.min_impressions),
+      currentArmId: row.current_arm_id,
+      winningArmId: row.winning_arm_id,
+      approvedAt: row.approved_at,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      adoptedAt: row.adopted_at,
+      cancelledAt: row.cancelled_at,
+      guardrails: JSON.parse(row.guardrails || '{}'),
+      result: JSON.parse(row.result || '{}'),
+      arms: arms.map(arm => this.parseExperimentArm(arm))
+    };
+  }
+
+  async upsertAudienceComment(comment) {
+    const existing = await this.getRow(
+      'SELECT id FROM audience_comments WHERE comment_id = ?',
+      [comment.commentId]
+    );
+    const id = existing?.id || this.generateId('comment');
+    await this.executeQuery(
+      `INSERT INTO audience_comments (
+        id, comment_id, video_id, parent_comment_id, author_name, author_channel_id,
+        is_channel_owner, text, like_count, reply_count, published_at, updated_at_youtube
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(comment_id) DO UPDATE SET
+        text = excluded.text,
+        like_count = excluded.like_count,
+        reply_count = excluded.reply_count,
+        updated_at_youtube = excluded.updated_at_youtube,
+        updated_at = CURRENT_TIMESTAMP`,
+      [
+        id,
+        comment.commentId,
+        comment.videoId,
+        comment.parentCommentId || null,
+        comment.authorName || null,
+        comment.authorChannelId || null,
+        comment.isChannelOwner ? 1 : 0,
+        comment.text,
+        Number(comment.likeCount || 0),
+        Number(comment.replyCount || 0),
+        comment.publishedAt || null,
+        comment.updatedAtYouTube || null
+      ]
+    );
+    return this.getAudienceComment(comment.commentId);
+  }
+
+  async getAudienceComment(commentId) {
+    const row = await this.getRow('SELECT * FROM audience_comments WHERE comment_id = ?', [commentId]);
+    return this.parseAudienceComment(row);
+  }
+
+  async listAudienceComments(options = {}) {
+    const conditions = ['video_id = ?'];
+    const params = [options.videoId];
+    if (options.topLevelOnly) conditions.push('parent_comment_id IS NULL');
+    if (options.analysisState) {
+      conditions.push('analysis_state = ?');
+      params.push(options.analysisState);
+    }
+    const limit = Math.max(1, Math.min(500, Number(options.limit || 200)));
+    const rows = await this.getAllRows(
+      `SELECT * FROM audience_comments WHERE ${conditions.join(' AND ')}
+       ORDER BY like_count DESC, published_at DESC LIMIT ?`,
+      [...params, limit]
+    );
+    return rows.map(row => this.parseAudienceComment(row));
+  }
+
+  async countAudienceComments(videoId) {
+    const row = await this.getRow(
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN parent_comment_id IS NULL THEN 1 ELSE 0 END) AS top_level
+       FROM audience_comments WHERE video_id = ?`,
+      [videoId]
+    );
+    return { total: Number(row?.total || 0), topLevel: Number(row?.top_level || 0) };
+  }
+
+  async setAudienceCommentAnalysis(commentId, flags) {
+    await this.executeQuery(
+      `UPDATE audience_comments
+       SET flags = ?, analysis_state = 'analyzed', updated_at = CURRENT_TIMESTAMP
+       WHERE comment_id = ?`,
+      [JSON.stringify(flags || []), commentId]
+    );
+    return this.getAudienceComment(commentId);
+  }
+
+  async markAudienceCommentReplied(commentId) {
+    await this.executeQuery(
+      `UPDATE audience_comments SET replied_by_agent = 1, updated_at = CURRENT_TIMESTAMP WHERE comment_id = ?`,
+      [commentId]
+    );
+    return this.getAudienceComment(commentId);
+  }
+
+  parseAudienceComment(row) {
+    if (!row) return null;
+    return {
+      ...row,
+      commentId: row.comment_id,
+      videoId: row.video_id,
+      parentCommentId: row.parent_comment_id,
+      authorName: row.author_name,
+      authorChannelId: row.author_channel_id,
+      isChannelOwner: Boolean(row.is_channel_owner),
+      likeCount: Number(row.like_count || 0),
+      replyCount: Number(row.reply_count || 0),
+      publishedAt: row.published_at,
+      updatedAtYouTube: row.updated_at_youtube,
+      flags: JSON.parse(row.flags || '[]'),
+      analysisState: row.analysis_state,
+      repliedByAgent: Boolean(row.replied_by_agent)
+    };
+  }
+
+  async saveEngagementInsight(insight) {
+    const existing = await this.getEngagementInsight(insight.videoId);
+    const merged = { ...(existing || {}), ...insight };
+    const id = existing?.id || this.generateId('insight');
+    await this.executeQuery(
+      `INSERT INTO engagement_insights (
+        id, video_id, production_id, title, comment_count, analyzed_count,
+        sentiment, themes, attention_flags, analysis_method, analyzed_at,
+        last_synced_at, newest_comment_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(video_id) DO UPDATE SET
+        production_id = excluded.production_id,
+        title = excluded.title,
+        comment_count = excluded.comment_count,
+        analyzed_count = excluded.analyzed_count,
+        sentiment = excluded.sentiment,
+        themes = excluded.themes,
+        attention_flags = excluded.attention_flags,
+        analysis_method = excluded.analysis_method,
+        analyzed_at = excluded.analyzed_at,
+        last_synced_at = excluded.last_synced_at,
+        newest_comment_at = excluded.newest_comment_at,
+        updated_at = CURRENT_TIMESTAMP`,
+      [
+        id,
+        insight.videoId,
+        merged.productionId || null,
+        merged.title || null,
+        Number(merged.commentCount || 0),
+        Number(merged.analyzedCount || 0),
+        JSON.stringify(merged.sentiment || {}),
+        JSON.stringify(merged.themes || []),
+        JSON.stringify(merged.attentionFlags || []),
+        merged.analysisMethod || 'ai',
+        merged.analyzedAt || null,
+        merged.lastSyncedAt || null,
+        merged.newestCommentAt || null
+      ]
+    );
+    return this.getEngagementInsight(insight.videoId);
+  }
+
+  async getEngagementInsight(videoId) {
+    const row = await this.getRow('SELECT * FROM engagement_insights WHERE video_id = ?', [videoId]);
+    return this.parseEngagementInsight(row);
+  }
+
+  async listEngagementInsights(options = {}) {
+    const limit = Math.max(1, Math.min(50, Number(options.limit || 12)));
+    const rows = await this.getAllRows(
+      'SELECT * FROM engagement_insights ORDER BY updated_at DESC LIMIT ?',
+      [limit]
+    );
+    return rows.map(row => this.parseEngagementInsight(row));
+  }
+
+  parseEngagementInsight(row) {
+    if (!row) return null;
+    return {
+      ...row,
+      videoId: row.video_id,
+      productionId: row.production_id,
+      commentCount: Number(row.comment_count || 0),
+      analyzedCount: Number(row.analyzed_count || 0),
+      sentiment: JSON.parse(row.sentiment || '{}'),
+      themes: JSON.parse(row.themes || '[]'),
+      attentionFlags: JSON.parse(row.attention_flags || '[]'),
+      analysisMethod: row.analysis_method,
+      analyzedAt: row.analyzed_at,
+      lastSyncedAt: row.last_synced_at,
+      newestCommentAt: row.newest_comment_at
+    };
+  }
+
+  async saveReplyDraft(draft) {
+    const existing = await this.getRow('SELECT id, status FROM reply_drafts WHERE comment_id = ?', [draft.commentId]);
+    if (existing?.status === 'posted') {
+      const error = new Error('A posted reply cannot be replaced');
+      error.status = 409;
+      throw error;
+    }
+    const id = existing?.id || this.generateId('reply');
+    await this.executeQuery(
+      `INSERT INTO reply_drafts (id, comment_id, video_id, draft_text, rationale)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(comment_id) DO UPDATE SET
+         draft_text = excluded.draft_text,
+         rationale = excluded.rationale,
+         edited_text = NULL,
+         status = 'proposed',
+         posted_comment_id = NULL,
+         posted_at = NULL,
+         failure_reason = NULL,
+         updated_at = CURRENT_TIMESTAMP`,
+      [id, draft.commentId, draft.videoId, draft.draftText, draft.rationale || null]
+    );
+    return this.getReplyDraft(id);
+  }
+
+  async getReplyDraft(id) {
+    const row = await this.getRow('SELECT * FROM reply_drafts WHERE id = ?', [id]);
+    return this.parseReplyDraft(row);
+  }
+
+  async listReplyDrafts(options = {}) {
+    const conditions = [];
+    const params = [];
+    if (options.videoId) {
+      conditions.push('video_id = ?');
+      params.push(options.videoId);
+    }
+    if (options.status) {
+      conditions.push('status = ?');
+      params.push(options.status);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const limit = Math.max(1, Math.min(100, Number(options.limit || 50)));
+    const rows = await this.getAllRows(
+      `SELECT * FROM reply_drafts ${where} ORDER BY updated_at DESC LIMIT ?`,
+      [...params, limit]
+    );
+    return rows.map(row => this.parseReplyDraft(row));
+  }
+
+  async updateReplyDraft(id, changes = {}) {
+    const columns = {
+      editedText: 'edited_text',
+      status: 'status',
+      postedCommentId: 'posted_comment_id',
+      postedAt: 'posted_at',
+      failureReason: 'failure_reason'
+    };
+    const sets = [];
+    const params = [];
+    for (const [key, column] of Object.entries(columns)) {
+      if (key in changes) {
+        sets.push(`${column} = ?`);
+        params.push(changes[key]);
+      }
+    }
+    if (sets.length) {
+      await this.executeQuery(
+        `UPDATE reply_drafts SET ${sets.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [...params, id]
+      );
+    }
+    return this.getReplyDraft(id);
+  }
+
+  async countReplyDraftsPostedSince(isoTime) {
+    const row = await this.getRow(
+      "SELECT COUNT(*) AS posted FROM reply_drafts WHERE status = 'posted' AND posted_at >= ?",
+      [isoTime]
+    );
+    return Number(row?.posted || 0);
+  }
+
+  parseReplyDraft(row) {
+    if (!row) return null;
+    return {
+      ...row,
+      commentId: row.comment_id,
+      videoId: row.video_id,
+      draftText: row.draft_text,
+      editedText: row.edited_text,
+      postedCommentId: row.posted_comment_id,
+      postedAt: row.posted_at,
+      failureReason: row.failure_reason
+    };
+  }
+
   async getPublishedContentContext(youtubeId) {
     const schedule = await this.getRow(
       `SELECT production_id, published_at, title, metadata
@@ -1893,8 +2638,45 @@ class Database {
       script: JSON.parse(row.script || '{}'),
       thumbnail: selectedThumbnail?.concept ? { ...thumbnail, concept: selectedThumbnail.concept } : thumbnail,
       seo: JSON.parse(row.seo || '{}'),
+      productionCost: this.summarizeProductionCost(sourceScenes),
       retentionScenes: this.buildRetentionSceneContext(sourceScenes, shortClip),
       retentionDuration: isShort ? shortClip?.duration || null : sourceScenes.reduce((sum, scene) => sum + Number(scene.duration || 0), 0)
+    };
+  }
+
+  summarizeProductionCost(scenes = []) {
+    const entries = scenes.flatMap(scene => [scene.actualCost, scene.narrationCost]).filter(entry => entry && (
+      entry.amount !== undefined || entry.billed !== undefined || entry.invoiceRequired || entry.provider || entry.generatedSeconds
+    ));
+    const currencies = new Set();
+    const providers = new Set();
+    let amount = 0;
+    let knownEntries = 0;
+    let unknownEntries = 0;
+    let freeEntries = 0;
+    for (const entry of entries) {
+      if (entry.provider) providers.add(String(entry.provider));
+      if (entry.billed === false) {
+        freeEntries++;
+        continue;
+      }
+      const numericAmount = Number(entry.amount);
+      if (Number.isFinite(numericAmount) && numericAmount >= 0) {
+        amount += numericAmount;
+        knownEntries++;
+        if (entry.currency) currencies.add(String(entry.currency).toUpperCase());
+      } else if (entry.invoiceRequired || entry.billed !== false) {
+        unknownEntries++;
+      }
+    }
+    return {
+      amount: currencies.size > 1 ? null : knownEntries ? Number(amount.toFixed(4)) : freeEntries && unknownEntries === 0 ? 0 : null,
+      currency: currencies.size === 1 ? [...currencies][0] : null,
+      complete: unknownEntries === 0 && currencies.size <= 1,
+      knownEntries,
+      unknownEntries,
+      freeEntries,
+      providers: [...providers]
     };
   }
 

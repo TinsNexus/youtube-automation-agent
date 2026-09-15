@@ -2,7 +2,9 @@
 
 **The open-source AI agent that runs a YouTube channel end to end.**
 
-Research topics → write scripts → generate narration and visuals → assemble videos → optimize metadata → review → schedule → publish → learn from analytics.
+Join our telegram community: https://t.co/L4SzbqosOM
+
+Research topics → write scripts → generate narration and visuals → assemble videos → optimize metadata → review → schedule → publish → learn from analytics and from what your audience says.
 
 [![CI](https://github.com/darkzOGx/youtube-automation-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/darkzOGx/youtube-automation-agent/actions/workflows/ci.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -10,14 +12,20 @@ Research topics → write scripts → generate narration and visuals → assembl
 
 ## What's new on master
 
-The latest build expands AgentTube from evidence-first long-form production into a repairable, provider-flexible, multi-format channel workflow:
+- **v2.10.0 is now on master:** DarkzSEO discoverability audits, controlled growth experiments, and outcome-aware channel operation are available together in the approval-first workflow.
 
-- **Scene-aware retention:** collect YouTube's real 100-point audience-retention curve, map it to the durable production timeline, and review scene-specific drop-off, rewatch, and strong-hold evidence before it can guide future work.
-- **Shorts Repurposing Studio:** turn an approved production into three source-scene-backed 9:16 drafts, choose blurred, cropped, or stacked layouts, render mobile captions locally, and approve each Short on its own schedule.
-- **Scene-level repair:** edit, reorder, lock, replace, or regenerate one scene, then rebuild the final MP4 without discarding the rest of the production.
-- **Narration reliability:** missing, stale, simulated, or failed TTS now blocks assembly, approval, scheduling, and publishing; narration-only recovery and reasoned intentional silence are explicit operator actions.
-- **Multi-provider AI video:** route bounded clips across Seedance, MiniMax H3, Gemini Omni Flash, Kling, and Wan with durable external task IDs, paid-seconds caps, hybrid local assembly, and slideshow fallback.
-- **Research and provenance:** retain exact sources, connect factual claims to reviewer-verified evidence, and carry realistic synthetic-media disclosure into YouTube metadata.
+## What's new in v2.10.0
+
+**AgentTube now has a discoverability adapter layer.** v2.10.0 connects the production pipeline to DarkzSEO without merging the projects or weakening human review, then adds the evidence needed to prove what packaging and strategy actually work:
+
+- **DarkzSEO Discoverability Preflight:** send a canonical content package—not the private dashboard—through versioned GEO, AIO, AEO, and web-search checks after metadata and provenance are assembled.
+- **Reviewable evidence:** persist stable rule IDs, severity, engine/schema identity, fingerprints, and operator decisions in SQLite. Keep a finding actionable or dismiss a false positive with a reason that carries into matching future audits.
+- **Safe local adapter boundary:** invoke DarkzSEO through JSON-only stdin/stdout without a shell or inherited API secrets. Missing Python, timeouts, and schema drift stay explicit and non-blocking.
+- **Controlled Growth Experiments Studio:** rotate only approved title/thumbnail arms, measure real interval evidence, restore the control, and require a separate decision before adopting a winner.
+- **Outcome & ROI Studio:** align the operator with a measurable KPI, target window, budget, and available revenue/cost evidence without converting missing economics into false zeroes.
+- **Platform-ready foundation:** audits already retain their target platform, providing the durable contract for planned TikTok and Instagram/Reels publishing and analytics adapters.
+
+DarkzSEO is optional. Install DarkzSEO 1.4+ into Python or set `DARKZSEO_PATH`; when it is unavailable, AgentTube records the reason and keeps the existing approval workflow operational.
 
 See the complete release history in [CHANGELOG.md](CHANGELOG.md).
 
@@ -87,12 +95,27 @@ A claim can be approved only when it links to a verified source. Unsupported cla
 
 Use the altered or synthetic media control only when the video contains realistic content that requires YouTube disclosure. The selected value is preserved in the publishing queue and included in the YouTube upload request.
 
+### Review discoverability guidance
+
+Every saved production receives an optional **DarkzSEO Discoverability Preflight** in Review Studio after metadata and provenance are assembled. The adapter sends a canonical content package—not the private dashboard—to DarkzSEO's versioned JSON API and stores the engine version, schema version, severity summary, stable rule IDs, and individual findings in SQLite.
+
+Findings are advisory in this release. Keep a useful recommendation as actionable, or dismiss a false positive with a reviewer reason that carries forward to matching findings on later audits. Missing Python, an unavailable DarkzSEO installation, timeouts, and schema mismatches remain explicit without blocking publication or silently changing scripts and metadata.
+
+For local development with a sibling checkout:
+
+```bash
+python -m pip install -e ../darkzseo
+```
+
+Alternatively set `DARKZSEO_PATH` to `darkzseo.py`. The adapter uses a shell-free Python child process, sends content JSON over stdin, and reads JSON-only stdout. DarkzSEO 1.4 or newer is required.
+
 ### What you need
 
 - Node.js 18+
 - A Google account and YouTube Data API credentials
 - At least one AI text provider key
 - FFmpeg, installed automatically through `ffmpeg-static`
+- Python 3.9+ and DarkzSEO 1.4+ for the optional discoverability preflight
 
 Gemini offers free access for supported text and TTS usage. Gemini AI image generation currently requires paid-tier access; without an image provider, Lumen can assemble gradient-based visuals instead.
 
@@ -112,11 +135,35 @@ Open **Analytics → What the agent learned** to review the evidence and confide
 
 When an approved learning calls for better packaging, Lumen prepares a control plus title and thumbnail variants for new videos. Review Studio shows those options before approval; the selected combination is the only one handed to the publishing queue. Lumen does not silently swap live YouTube metadata.
 
+### Prove a growth recommendation
+
+Open **Analytics → Controlled Growth Experiments** after a video with approved-learning packaging variants is published. Create a draft plan with a 24–168 hour window per arm and a minimum-impressions threshold, review the exact title and thumbnail combinations, then separately approve and start the live test.
+
+Lumen records a cumulative analytics sample before and after each arm and evaluates only the interval delta. Every arm must reach the configured impression and click floor. The leading CTR must clear a 95% evidence threshold without a material retention regression or traffic-source shift; otherwise the result is explicitly **inconclusive**. Simulated analytics never advance an experiment.
+
+Arm rotations are limited to the plan you approved. After the final arm, Lumen restores the control title and thumbnail before presenting the result. Applying the winner is a separate confirmation; only then does the validated packaging pattern become an approved learning for future Autonomous Operator runs. Experiment state and evidence are stored in SQLite so restarts do not erase progress.
+
+### Align the channel with outcomes and ROI
+
+The Autonomous Operator strategy can define a measurable primary outcome—views, watch hours, net subscribers, engagement rate, or estimated revenue—plus a numeric target, evidence window, monthly production budget, and currency. The existing free-text outcome context remains available for goals that need human nuance.
+
+At each real analytics window, Lumen stores subscriber gains and losses, watch hours, monetization evidence when the channel exposes it, and known production costs from durable scene records. **Analytics → Outcome & ROI Studio** shows target progress, evidence coverage, net subscribers, estimated revenue, known cost, ROI, and comparisons by content pillar, format, and production provider.
+
+Missing evidence is explicit. A channel without monetization access shows revenue as unavailable rather than zero, and ROI stays unavailable until both revenue and complete cost evidence exist. When at least two comparable videos exist in each group, the learning engine can propose reallocating future content toward the pillar or format that best advances the configured outcome. That proposal remains pending until you approve it; Lumen never changes the strategy or budget silently.
+
 ### Find the exact scene that lost viewers
 
 At each real analytics window, AgentTube also requests YouTube's audience-retention curve and maps its 100 elapsed-time points onto the stored scene durations. Open **Analytics → Scene-aware retention** to see the curve divided by scene, compare absolute and relative retention, and inspect drop-off, rewatch, strong-hold, or steady signals for each beat.
 
 Retention snapshots are stored separately for long-form videos and Shorts. Missing, sparse, or simulated curves never enter this evidence layer. A scene finding creates a pending learning recommendation; it cannot guide future scripts, pacing, or scene structure until the operator approves it, and AgentTube never rewrites a published video. Use **Refresh curve** for a read-only update from YouTube Analytics, or `GET /api/retention/:videoId` to inspect stored evidence.
+
+### Engage with your audience
+
+Open **Engagement** in the dashboard. AgentTube syncs comments for recently published videos every four hours (more often for fresh videos) and classifies them into themes, sentiment, and questions. Likely spam, scams, and toxic comments are quarantined into a separate needs-attention list — AgentTube never deletes or hides a comment; acting on flagged comments stays in YouTube Studio.
+
+Choose **Draft replies** to generate suggested answers in your channel's voice. Nothing posts automatically: every reply waits in the queue where you can edit, discard, or approve it, and approval requires an explicit confirmation. Posting requires re-authorizing YouTube once to grant the comment permission (`youtube.force-ssl`); until then the studio works in read-and-draft mode. A daily posting cap (default 50, `ENGAGEMENT_DAILY_REPLY_CAP`) keeps approval sessions bounded.
+
+When three or more commenters ask for the same thing, the analysis mines an **audience-requested idea** with comment permalinks as evidence. Like every other learning, it stays pending until you approve it — only then can the Autonomous Channel Operator plan a video that answers it. If no AI text provider is configured, comment sync still works, but the studio records only mechanical facts and never invents themes, drafts, or ideas.
 
 ## From idea to published video
 
@@ -127,7 +174,7 @@ Retention snapshots are stored separately for long-form videos and Shorts. Missi
 | Production | Generates narration and visuals, then assembles a real MP4 | Provider choice and media fallbacks |
 | Review | Runs quality checks and opens the video in Review Studio | Facts, media rights, edits, approval |
 | Publish | Schedules and uploads approved content | Privacy, timing, final decision |
-| Learn | Captures 24-hour and 7-day evidence, then proposes the next move | Approve or reject each learning before it guides planning |
+| Learn | Captures 24-hour and 7-day evidence, measures the configured outcome and economics, then proposes the next move | Choose the KPI and approve or reject each learning before it guides planning |
 
 Lumen distinguishes real MP4 output from simulated placeholders. Simulated output cannot enter the approval or publishing path.
 
@@ -144,7 +191,8 @@ graph TD
     C --> E[SEO Optimizer Agent]
     D --> F[Production Management Agent]
     E --> F
-    F --> G[Review and Approval Gates]
+    F --> Z[DarkzSEO Discoverability Preflight]
+    Z --> G[Review and Approval Gates]
     G --> H[Publishing & Scheduling Agent]
     H --> I[Analytics & Optimization Agent]
     I -->|feedback loop| A
@@ -161,6 +209,7 @@ Each agent handles one stage of the pipeline:
 | **Thumbnail Designer** | Creates thumbnails, runs A/B variations |
 | **SEO Optimizer** | Keywords, titles, descriptions, tags |
 | **Production** | Coordinates TTS audio, image assets, video assembly |
+| **Discoverability** | Runs versioned, advisory GEO/AIO/AEO content audits through DarkzSEO |
 | **Publishing** | Uploads, schedules, manages playlists |
 | **Analytics** | Tracks performance, feeds insights back to strategy |
 
@@ -360,7 +409,7 @@ curl -X POST http://localhost:3456/api/readiness/run \
 curl -X PUT http://localhost:3456/api/operator/strategy \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
-  -d '{"objective":"Own practical AI automation for small teams","audience":"Small business operators","contentPillars":["AI workflows","Automation playbooks"],"cadencePerWeek":2,"videosPerRun":2,"defaultFormat":"tutorial","defaultLength":"medium","status":"draft"}'
+  -d '{"objective":"Own practical AI automation for small teams","audience":"Small business operators","contentPillars":["AI workflows","Automation playbooks"],"cadencePerWeek":2,"videosPerRun":2,"defaultFormat":"tutorial","defaultLength":"medium","primaryKpi":"subscribers","targetValue":100,"targetWindowDays":28,"monthlyBudget":250,"outcomeCurrency":"USD","status":"draft"}'
 
 # activate the saved strategy and start a background operator run
 curl -X POST http://localhost:3456/api/operator/start \
@@ -378,9 +427,23 @@ curl http://localhost:3456/schedule
 # get analytics
 curl http://localhost:3456/analytics
 
+# get the goal-aligned Outcome & ROI Studio summary
+curl http://localhost:3456/api/outcomes
+
 # approve an evidence-backed learning for future autonomous plans
 curl -X POST http://localhost:3456/api/learning/recommendations/:recommendationId/approve \
   -H "x-api-key: $API_KEY"
+
+# inspect controlled experiments and eligible published videos
+curl http://localhost:3456/api/experiments
+
+# create and approve a packaging test plan (start/adopt are separate confirmed actions)
+curl -X POST http://localhost:3456/api/experiments \
+  -H "Content-Type: application/json" -H "x-api-key: $API_KEY" \
+  -d '{"productionId":"production-id","armDurationHours":48,"minImpressions":1000}'
+curl -X POST http://localhost:3456/api/experiments/:experimentId/approve \
+  -H "Content-Type: application/json" -H "x-api-key: $API_KEY" \
+  -d '{"confirmed":true}'
 
 # inspect, edit, and approve content before scheduling
 curl http://localhost:3456/api/content/:contentId

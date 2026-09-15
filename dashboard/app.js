@@ -3,7 +3,9 @@ const ui = {
   currentView: 'overview',
   refreshing: false,
   toastTimer: null,
-  retentionSnapshotId: null
+  retentionSnapshotId: null,
+  engagementVideoId: null,
+  engagementDetail: null
 };
 
 const $ = selector => document.querySelector(selector);
@@ -137,6 +139,8 @@ function renderDashboard() {
   renderCalendar(state.schedule);
   renderIdeas(state.ideas);
   renderAnalytics(state.analytics, state.learning);
+  renderGrowthExperiments(state.experiments || {});
+  renderEngagement(ui.state.engagement || {});
   renderActivation(state.activation);
   renderReadiness(state.readiness);
   renderOperator(state.channelStrategy, state.operatorRuns || [], { ...state.system, readiness: state.readiness });
@@ -312,8 +316,69 @@ function renderAnalytics(analytics, learning = {}) {
   const performers = Array.isArray(analytics.topPerformers) ? analytics.topPerformers : [];
   $('#top-performers').innerHTML = performers.length ? performers.map(item => `
     <article class="performer-card"><strong>${escapeHTML(item.videoDetails?.title || item.title || 'Untitled video')}</strong><div class="meta-line">Performance ${escapeHTML(item.performance?.score ?? item.performance_score ?? '—')} / 100</div></article>`).join('') : empty('No analyzed videos yet.');
+  renderOutcome(learning.outcome || {});
   renderLearning(learning);
   renderRetention(learning.retention || {});
+}
+
+function formatOutcomeValue(value, kind = 'number', currency = 'USD') {
+  if (value === null || value === undefined) return 'Unavailable';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 'Unavailable';
+  if (kind === 'currency') {
+    try {
+      return new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 2 }).format(number);
+    } catch (_error) {
+      return `${currency} ${number.toFixed(2)}`;
+    }
+  }
+  if (kind === 'percent') return `${number.toFixed(1)}%`;
+  if (kind === 'hours') return `${number.toFixed(1)}h`;
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(number);
+}
+
+function renderOutcome(outcome = {}) {
+  const status = $('#outcome-status');
+  if (!outcome.configured || !outcome.goal) {
+    status.textContent = 'Not configured';
+    status.className = 'status';
+    $('#outcome-summary').innerHTML = empty('Choose a measurable primary outcome in the Autonomous Operator strategy.');
+    $('#outcome-economics').innerHTML = '';
+    $('#outcome-breakdowns').innerHTML = '';
+    $('#outcome-policy').textContent = outcome.evidencePolicy || 'Configure a primary outcome to activate goal-aligned learning.';
+    return;
+  }
+  const { goal, economics = {}, coverage = {}, breakdowns = {} } = outcome;
+  status.textContent = outcome.available ? 'Measuring' : 'Awaiting evidence';
+  status.className = `status ${outcome.available ? 'active' : ''}`;
+  const target = goal.targetValue === null
+    ? `No numeric target · ${goal.windowDays}-day evidence window`
+    : `${formatOutcomeValue(goal.targetValue, goal.unit, goal.currency)} target · ${goal.windowDays} days`;
+  const progress = outcome.progressPercent === null ? null : Math.min(100, Number(outcome.progressPercent));
+  $('#outcome-summary').innerHTML = `
+    <div class="outcome-primary">
+      <span>${escapeHTML(goal.label)}</span>
+      <strong>${escapeHTML(outcome.formattedObserved || 'Unavailable')}</strong>
+      <small>${escapeHTML(target)} · ${Number(outcome.measuredVideoCount || 0)} measured videos</small>
+      ${progress === null ? '' : `<div class="outcome-progress" role="progressbar" aria-label="Outcome target progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span style="width:${progress}%"></span></div><small>${Number(outcome.progressPercent).toFixed(1)}% of target from stored measurement windows</small>`}
+    </div>`;
+  const economicsRows = [
+    ['Net subscribers', economics.netSubscribers, 'number', coverage.subscribers],
+    ['Watch hours', economics.watchHours, 'hours', null],
+    ['Estimated revenue', economics.estimatedRevenue, 'currency', coverage.revenue],
+    ['Known production cost', economics.knownProductionCost, 'currency', coverage.cost],
+    ['Estimated ROI', economics.roi, 'percent', null],
+    ['Budget used', economics.budgetUsedPercent, 'percent', null]
+  ];
+  $('#outcome-economics').innerHTML = economicsRows.map(([name, value, kind, metricCoverage]) => `
+    <div><span>${escapeHTML(name)}</span><strong>${escapeHTML(formatOutcomeValue(value, kind, economics.currency || goal.currency))}</strong>${metricCoverage ? `<small>${Number(metricCoverage.measured || 0)}/${Number(metricCoverage.total || 0)} videos measured</small>` : ''}</div>`).join('');
+  const dimensions = [
+    ['pillar', 'Content pillars'], ['format', 'Formats'], ['provider', 'Production providers']
+  ].filter(([key]) => Array.isArray(breakdowns[key]) && breakdowns[key].length);
+  $('#outcome-breakdowns').innerHTML = dimensions.length ? dimensions.map(([key, heading]) => `
+    <section><h3>${escapeHTML(heading)}</h3>${breakdowns[key].slice(0, 5).map(item => `
+      <div class="outcome-breakdown-row"><span>${escapeHTML(label(item.name))}<small>${Number(item.count || 0)} video${Number(item.count || 0) === 1 ? '' : 's'}</small></span><strong>${escapeHTML(formatOutcomeValue(item.average, goal.unit, goal.currency))} avg</strong></div>`).join('')}</section>`).join('') : empty('Breakdowns appear once measured videos carry comparable pillar, format, or provider evidence.');
+  $('#outcome-policy').textContent = outcome.evidencePolicy;
 }
 
 function renderLearning(learning = {}) {
@@ -341,6 +406,49 @@ function renderLearning(learning = {}) {
         </span>
       </div>
     </article>`).join('') : empty('No recommendation yet. Lumen needs at least two real, sufficiently exposed measurements.');
+}
+
+function renderGrowthExperiments(summary = {}) {
+  const experiments = Array.isArray(summary.experiments) ? summary.experiments : [];
+  const candidates = Array.isArray(summary.candidates) ? summary.candidates : [];
+  const candidate = $('#experiment-candidate');
+  const create = $('#experiment-create-button');
+  candidate.innerHTML = candidates.length
+    ? candidates.map(item => `<option value="${escapeHTML(item.productionId)}">${escapeHTML(item.title || item.productionId)}</option>`).join('')
+    : '<option value="">No eligible published variants</option>';
+  candidate.disabled = !candidates.length;
+  create.disabled = !candidates.length;
+  $('#experiment-status').textContent = `${Number(summary.activeCount || 0)} running · ${Number(summary.awaitingDecisionCount || 0)} decision${Number(summary.awaitingDecisionCount || 0) === 1 ? '' : 's'}`;
+  $('#experiment-policy').textContent = summary.evidencePolicy || 'Only real YouTube evidence advances controlled tests.';
+
+  $('#growth-experiments').innerHTML = experiments.length ? experiments.map(experiment => {
+    const winner = experiment.arms?.find(arm => arm.id === experiment.winningArmId);
+    const actions = [];
+    if (experiment.status === 'draft') actions.push(`<button class="text-button approve" data-experiment-action="approve" data-experiment-id="${escapeHTML(experiment.id)}">Approve plan</button>`);
+    if (experiment.status === 'approved') actions.push(`<button class="button primary small" data-experiment-action="start" data-experiment-id="${escapeHTML(experiment.id)}">Start live test</button>`);
+    if (experiment.status === 'running') {
+      actions.push(`<button class="button secondary small" data-experiment-action="refresh" data-experiment-id="${escapeHTML(experiment.id)}">Refresh evidence</button>`);
+      actions.push(`<button class="text-button" data-experiment-action="cancel" data-experiment-id="${escapeHTML(experiment.id)}">Cancel &amp; restore control</button>`);
+    }
+    if (experiment.status === 'action_required') actions.push(`<button class="text-button" data-experiment-action="cancel" data-experiment-id="${escapeHTML(experiment.id)}">Retry control restore</button>`);
+    if (experiment.status === 'awaiting_winner') actions.push(`<button class="button primary small" data-experiment-action="adopt" data-experiment-id="${escapeHTML(experiment.id)}">Adopt ${escapeHTML(winner?.label || 'winner')}</button>`);
+    const arms = (experiment.arms || []).map(arm => {
+      const result = arm.result || {};
+      const active = arm.id === experiment.currentArmId && experiment.status === 'running';
+      return `<div class="experiment-arm ${active ? 'active' : ''} ${arm.id === experiment.winningArmId ? 'winner' : ''}">
+        <div><strong>${escapeHTML(arm.label)}</strong>${arm.isControl ? '<small>Control</small>' : ''}</div>
+        <span>${escapeHTML(arm.title)}</span>
+        <div class="experiment-arm-metrics"><b>${Number(result.ctr || 0).toFixed(2)}% CTR</b><small>${Number(result.impressions || 0).toLocaleString()} impressions</small></div>
+      </div>`;
+    }).join('');
+    return `<article class="growth-experiment-card">
+      <div class="learning-card-heading"><strong>${escapeHTML(experiment.title)}</strong>${statusChip(experiment.status)}</div>
+      <p>${escapeHTML(experiment.hypothesis)}</p>
+      <div class="experiment-arm-list">${arms}</div>
+      ${experiment.result?.reason ? `<p class="experiment-result"><strong>Result:</strong> ${escapeHTML(experiment.result.reason)}${experiment.result.liftPercent !== undefined ? ` · ${escapeHTML(experiment.result.liftPercent)}% lift` : ''}</p>` : ''}
+      <div class="learning-meta"><span>${Number(experiment.armDurationHours || 0)}h per arm · ${Number(experiment.minImpressions || 0).toLocaleString()} minimum impressions</span><span class="learning-actions">${actions.join('')}</span></div>
+    </article>`;
+  }).join('') : empty('Publish content with approved-learning title and thumbnail variants to create the first controlled test.');
 }
 
 function renderRetention(retention = {}) {
@@ -386,6 +494,129 @@ function renderRetention(retention = {}) {
         <div><span>Sharpest drop</span><strong>${Number(scene.largestDropPoints || 0).toFixed(1)} pts</strong></div>
       </div>
     </article>`).join('') || empty('The saved curve could not be mapped to a scene timeline.');
+}
+
+function renderEngagement(engagement = {}) {
+  $('#engagement-policy').textContent = engagement.evidencePolicy || '';
+  const posting = $('#engagement-posting-status');
+  posting.textContent = engagement.postingEnabled ? 'posting enabled' : 'posting locked';
+  posting.className = `status ${engagement.postingEnabled ? 'success' : 'warning'}`;
+  posting.title = engagement.postingEnabled ? '' : 'Re-authorize YouTube (npm run walkthrough) to grant the comment permission.';
+  $('#engagement-drafts-count').textContent = `${engagement.pendingDrafts || 0} drafts`;
+  $('#engagement-attention-count').textContent = `${engagement.needsAttentionCount || 0} flagged`;
+  $('#engagement-ideas-count').textContent = `${engagement.pendingAudienceIdeas || 0} pending`;
+
+  const insights = Array.isArray(engagement.insights) ? engagement.insights : [];
+  const select = $('#engagement-video-select');
+  if (!insights.length) {
+    ui.engagementVideoId = null;
+    ui.engagementDetail = null;
+    select.innerHTML = '<option value="">No synced videos yet</option>';
+    select.disabled = true;
+    $('#engagement-sync-button').disabled = true;
+    $('#engagement-draft-button').disabled = true;
+    $('#engagement-meta').innerHTML = '';
+    $('#engagement-themes').innerHTML = empty('Comments appear after a published video is synced.');
+    $('#engagement-drafts').innerHTML = empty('Draft replies from a synced video to review them here.');
+    $('#engagement-attention').innerHTML = empty('Nothing flagged as spam, scam, or toxic.');
+  } else {
+    if (!insights.some(item => item.videoId === ui.engagementVideoId)) ui.engagementVideoId = insights[0].videoId;
+    select.disabled = false;
+    select.innerHTML = insights.map(item => `<option value="${escapeHTML(item.videoId)}" ${item.videoId === ui.engagementVideoId ? 'selected' : ''}>${escapeHTML(item.title || item.videoId)}</option>`).join('');
+    $('#engagement-sync-button').disabled = false;
+    $('#engagement-sync-button').dataset.videoId = ui.engagementVideoId;
+    $('#engagement-draft-button').disabled = false;
+    $('#engagement-draft-button').dataset.videoId = ui.engagementVideoId;
+    renderEngagementDetail();
+  }
+  renderAudienceIdeas();
+}
+
+function renderEngagementDetail() {
+  const detail = ui.engagementDetail;
+  if (!detail || detail.insight?.videoId !== ui.engagementVideoId) {
+    loadEngagementDetail(ui.engagementVideoId);
+    return;
+  }
+  const insight = detail.insight || {};
+  const sentiment = insight.sentiment || {};
+  const fallback = insight.analysisMethod === 'fallback';
+  $('#engagement-meta').innerHTML = [
+    `${insight.commentCount || 0} comments`,
+    `${insight.analyzedCount || 0} analyzed`,
+    fallback ? 'AI analysis unavailable — mechanical facts only' : `${sentiment.positive || 0} positive · ${sentiment.neutral || 0} neutral · ${sentiment.negative || 0} negative`,
+    insight.lastSyncedAt ? `synced ${new Date(insight.lastSyncedAt).toLocaleString()}` : 'never synced'
+  ].map(item => `<span>${escapeHTML(item)}</span>`).join('');
+
+  const themes = Array.isArray(insight.themes) ? insight.themes : [];
+  $('#engagement-themes').innerHTML = themes.length ? themes.map(theme => `
+    <article class="learning-card">
+      <div class="learning-card-heading"><strong>${escapeHTML(theme.title)}</strong>${statusChip(theme.kind)}</div>
+      <p>${escapeHTML(theme.summary)}</p>
+      <div class="learning-meta"><span>${escapeHTML(String(theme.count || 0))} comments</span></div>
+    </article>`).join('') : empty(fallback ? 'Themes need a working AI text provider.' : 'No recurring themes yet.');
+
+  const commentsById = new Map((detail.comments || []).map(comment => [comment.commentId, comment]));
+  const postingEnabled = ui.state?.engagement?.postingEnabled === true;
+  const drafts = (detail.drafts || []).filter(draft => draft.status !== 'discarded');
+  const draftsContainer = $('#engagement-drafts');
+  // The 8s poll must not wipe a reply the operator is actively editing.
+  const draftsHTML = drafts.length ? drafts.map(draft => {
+    const comment = commentsById.get(draft.commentId) || {};
+    const locked = draft.status === 'posted';
+    return `
+    <article class="comment-card" data-reply-card="${escapeHTML(draft.id)}">
+      <div class="learning-card-heading"><strong>${escapeHTML(comment.authorName || 'Viewer')}</strong>${statusChip(draft.status)}</div>
+      <p class="comment-original">${escapeHTML(comment.text || '')}</p>
+      <label><span>Reply</span><textarea data-reply-text maxlength="1000" ${locked ? 'disabled' : ''}>${escapeHTML(draft.editedText || draft.draftText)}</textarea></label>
+      ${draft.failureReason ? `<p class="meta-line">Last attempt failed: ${escapeHTML(draft.failureReason)}</p>` : ''}
+      <div class="learning-actions">
+        ${locked ? '' : `<button class="button primary small" data-reply-approve="${escapeHTML(draft.id)}" ${postingEnabled ? '' : 'disabled title="Re-authorize YouTube to enable posting"'}>Approve &amp; post</button>
+        <button class="text-button" data-reply-save="${escapeHTML(draft.id)}">Save edit</button>
+        <button class="text-button danger-text" data-reply-discard="${escapeHTML(draft.id)}">Discard</button>`}
+      </div>
+    </article>`;
+  }).join('') : empty('No reply drafts for this video yet.');
+  // Guard the focused textarea only: a clicked action button also holds focus, and skipping
+  // the rebuild for it would leave the panel showing pre-action state.
+  const editingReply = draftsContainer.contains(document.activeElement)
+    && document.activeElement.matches('[data-reply-text]');
+  if (!editingReply) draftsContainer.innerHTML = draftsHTML;
+
+  const attention = Array.isArray(insight.attentionFlags) ? insight.attentionFlags : [];
+  $('#engagement-attention').innerHTML = attention.length ? attention.map(flag => {
+    const comment = commentsById.get(flag.commentId) || {};
+    return `
+    <article class="comment-card">
+      <div class="learning-card-heading"><strong>${escapeHTML((flag.categories || []).join(', '))}</strong></div>
+      <p class="comment-original">${escapeHTML(comment.text || '')}</p>
+      <a class="text-button" href="${escapeHTML(flag.permalink || '#')}" target="_blank" rel="noopener noreferrer">Open on YouTube</a>
+    </article>`;
+  }).join('') : empty('Nothing flagged as spam, scam, or toxic.');
+}
+
+async function loadEngagementDetail(videoId) {
+  if (!videoId) return;
+  try {
+    const data = await api(`/api/engagement/${encodeURIComponent(videoId)}`);
+    ui.engagementDetail = data.result;
+    renderEngagementDetail();
+  } catch (_error) { /* toast already shown by api() */ }
+}
+
+function renderAudienceIdeas() {
+  const recommendations = (ui.state?.learning?.recommendations || []).filter(item => item.category === 'audience_demand');
+  $('#engagement-ideas').innerHTML = recommendations.length ? recommendations.map(item => `
+    <article class="learning-card">
+      <div class="learning-card-heading"><strong>${escapeHTML(item.title)}</strong>${statusChip(item.status)}</div>
+      <p>${escapeHTML(item.rationale)}</p>
+      <div class="learning-meta"><span>${escapeHTML(label(item.confidence))} confidence</span>
+        <span class="learning-actions">
+          ${item.status !== 'approved' ? `<button class="text-button approve" data-learning-action="approve" data-learning-id="${escapeHTML(item.id)}">Approve</button>` : ''}
+          ${item.status !== 'rejected' ? `<button class="text-button" data-learning-action="reject" data-learning-id="${escapeHTML(item.id)}">Reject</button>` : ''}
+        </span>
+      </div>
+    </article>`).join('') : empty('Mined audience requests appear here once comment analysis finds repeated asks.');
 }
 
 function retentionChart(snapshot = {}) {
@@ -460,6 +691,11 @@ function renderOperator(strategy, runs, system) {
     defaultFormat: strategy.default_format,
     defaultLength: strategy.default_length,
     successMetric: strategy.success_metric,
+    primaryKpi: strategy.primary_kpi,
+    targetValue: strategy.target_value,
+    targetWindowDays: strategy.target_window_days,
+    monthlyBudget: strategy.monthly_budget,
+    outcomeCurrency: strategy.outcome_currency,
     constraints: strategy.constraints
   } : {};
   for (const [name, value] of Object.entries(mapping)) {
@@ -554,6 +790,7 @@ function switchView(view) {
     pipeline: ['CONTENT OPERATIONS', 'From idea to published.'],
     calendar: ['EDITORIAL PLANNING', 'Plan before you generate.'],
     analytics: ['PERFORMANCE', 'Turn results into the next move.'],
+    engagement: ['AUDIENCE ENGAGEMENT', 'Talk with the people watching.'],
     readiness: ['PRODUCTION READINESS', 'Verify before autonomy runs.'],
     settings: ['CHANNEL GUARDRAILS', 'Make every agent sound like you.']
   };
@@ -620,6 +857,30 @@ function renderProvenanceEditor(provenance = {}, canReview = true) {
     <div id="provenance-claims" class="provenance-list">${claims.map(claim => renderClaimEditor(claim, sources, !canReview)).join('') || '<p class="empty-inline">No externally verifiable claims declared.</p>'}</div>
     <label class="toggle disclosure-toggle"><input id="contains-synthetic-media" type="checkbox" ${provenance.containsSyntheticMedia ? 'checked' : ''} ${canReview ? '' : 'disabled'}><span></span> Contains realistic altered or synthetic media requiring YouTube disclosure</label>
     ${canReview ? '<button type="button" class="button secondary" data-save-provenance>Save evidence review</button>' : ''}
+  </section>`;
+}
+
+function renderDiscoverabilityPanel(item) {
+  const audit = item.discoverability;
+  const findings = audit?.findings || [];
+  const state = !audit ? 'Not run' : audit.status === 'unavailable' ? 'Unavailable' : `${findings.length} finding${findings.length === 1 ? '' : 's'}`;
+  const stateClass = audit?.status === 'passed' || (audit && findings.length === 0) ? 'success' : 'warning';
+  return `<section class="discoverability-panel">
+    <div class="panel-heading discoverability-heading">
+      <div><p class="eyebrow">DISCOVERABILITY PREFLIGHT</p><h3>DarkzSEO review</h3><p>Review GEO, AIO, AEO, and web-search guidance against this content package. Findings are advisory and never rewrite or publish content.</p></div>
+      <div class="discoverability-actions"><span class="status ${stateClass}">${escapeHTML(state)}</span><button type="button" class="button secondary small" data-discoverability-run="${escapeHTML(item.id)}">${audit ? 'Run again' : 'Run audit'}</button></div>
+    </div>
+    ${audit?.error ? `<p class="callout">DarkzSEO could not run${audit.errorCode || audit.error_code ? ` (${escapeHTML(audit.errorCode || audit.error_code)})` : ''}: ${escapeHTML(audit.error)}</p>` : ''}
+    ${findings.length ? `<div class="discoverability-findings">${findings.map(finding => {
+      const reviewStatus = finding.reviewStatus || finding.review_status || 'pending';
+      return `<article class="discoverability-finding severity-${escapeHTML(String(finding.severity || 'info').toLowerCase())}" data-discoverability-finding="${escapeHTML(finding.id)}">
+        <div class="discoverability-finding-heading"><span class="severity-badge">${escapeHTML(finding.severity)}</span><strong>${escapeHTML(finding.ruleId || finding.rule_id)}</strong><span class="review-state ${escapeHTML(reviewStatus)}">${escapeHTML(label(reviewStatus))}</span></div>
+        <p>${escapeHTML(finding.message)}</p>
+        ${finding.remediation ? `<small>${escapeHTML(finding.remediation)}</small>` : ''}
+        ${finding.reviewReason || finding.review_reason ? `<small>Reviewer note: ${escapeHTML(finding.reviewReason || finding.review_reason)}</small>` : ''}
+        <div class="discoverability-review-actions"><button type="button" class="text-button approve" data-discoverability-accept ${reviewStatus === 'accepted' ? 'disabled' : ''}>Keep as actionable</button><button type="button" class="text-button" data-discoverability-dismiss ${reviewStatus === 'dismissed' ? 'disabled' : ''}>Dismiss false positive</button></div>
+      </article>`;
+    }).join('')}</div>` : audit && audit.status !== 'unavailable' ? '<p class="empty-inline">No discoverability findings. The content package passed the configured advisory checks.</p>' : '<p class="empty-inline">Run DarkzSEO to create a versioned, reviewable audit for this production.</p>'}
   </section>`;
 }
 
@@ -760,6 +1021,7 @@ async function openContent(productionId) {
         </div>
         ${renderSceneEditor(item, canReview)}
         ${renderShortsStudio(item)}
+        ${renderDiscoverabilityPanel(item)}
         ${renderProvenanceEditor(item.provenance, canReview)}
           <div class="form-grid two">
             <label><span>Publish time</span><input name="publishTime" type="datetime-local" value="${toLocalInput(publishTime)}"></label>
@@ -973,6 +1235,27 @@ document.addEventListener('click', async event => {
     await mutate(`/api/learning/recommendations/${encodeURIComponent(id)}/${action}`, 'POST', {}, message).catch(() => {});
   }
 
+  const experiment = event.target.closest('[data-experiment-action]');
+  if (experiment) {
+    const action = experiment.dataset.experimentAction;
+    const id = experiment.dataset.experimentId;
+    const prompts = {
+      approve: 'Approve this complete experiment plan? This does not change YouTube yet.',
+      start: 'Start this live test? Lumen will rotate only the approved arms and restore the control before asking you to adopt a winner.',
+      adopt: 'Adopt the evidence-backed winner on YouTube and approve its learning for future plans?',
+      cancel: 'Cancel this experiment and restore the control title and thumbnail?'
+    };
+    if (prompts[action] && !confirm(prompts[action])) return;
+    const messages = {
+      approve: 'Experiment plan approved.',
+      start: 'Controlled experiment started.',
+      refresh: 'Experiment evidence refreshed.',
+      adopt: 'Winner adopted and approved for future planning.',
+      cancel: 'Experiment cancelled and control restored.'
+    };
+    await mutate(`/api/experiments/${encodeURIComponent(id)}/${action}`, 'POST', prompts[action] ? { confirmed: true } : {}, messages[action]).catch(() => {});
+  }
+
   const refreshRetention = event.target.closest('#refresh-retention-button');
   if (refreshRetention?.dataset.videoId) {
     refreshRetention.disabled = true;
@@ -990,6 +1273,58 @@ document.addEventListener('click', async event => {
     }
   }
 
+  const syncEngagement = event.target.closest('#engagement-sync-button');
+  if (syncEngagement?.dataset.videoId) {
+    syncEngagement.disabled = true;
+    try {
+      await mutate(`/api/engagement/${encodeURIComponent(syncEngagement.dataset.videoId)}/sync`, 'POST', { analyze: true }, 'Comments synced from YouTube.');
+      ui.engagementDetail = null;
+      renderEngagement(ui.state?.engagement || {});
+    } catch (_error) { /* toast shown */ } finally {
+      syncEngagement.disabled = false;
+    }
+  }
+
+  const draftEngagement = event.target.closest('#engagement-draft-button');
+  if (draftEngagement?.dataset.videoId) {
+    draftEngagement.disabled = true;
+    try {
+      await mutate(`/api/engagement/${encodeURIComponent(draftEngagement.dataset.videoId)}/draft-replies`, 'POST', {}, 'Reply drafts created for review.');
+      ui.engagementDetail = null;
+      renderEngagement(ui.state?.engagement || {});
+    } catch (_error) { /* toast shown */ } finally {
+      draftEngagement.disabled = false;
+    }
+  }
+
+  const replySave = event.target.closest('[data-reply-save]');
+  if (replySave) {
+    const card = replySave.closest('[data-reply-card]');
+    const text = card?.querySelector('[data-reply-text]')?.value || '';
+    await mutate(`/api/engagement/replies/${encodeURIComponent(replySave.dataset.replySave)}`, 'PATCH', { editedText: text }, 'Reply draft updated.').catch(() => {});
+    ui.engagementDetail = null;
+    renderEngagement(ui.state?.engagement || {});
+  }
+
+  const replyDiscard = event.target.closest('[data-reply-discard]');
+  if (replyDiscard) {
+    await mutate(`/api/engagement/replies/${encodeURIComponent(replyDiscard.dataset.replyDiscard)}`, 'PATCH', { discard: true }, 'Reply draft discarded.').catch(() => {});
+    ui.engagementDetail = null;
+    renderEngagement(ui.state?.engagement || {});
+  }
+
+  const replyApprove = event.target.closest('[data-reply-approve]');
+  if (replyApprove) {
+    const card = replyApprove.closest('[data-reply-card]');
+    const text = card?.querySelector('[data-reply-text]')?.value || '';
+    if (!text.trim()) return showToast('Reply text is empty.', 'error');
+    if (confirm(`Post this reply to YouTube?\n\n${text}`)) {
+      await mutate(`/api/engagement/replies/${encodeURIComponent(replyApprove.dataset.replyApprove)}/approve`, 'POST', { confirmed: true, editedText: text }, 'Reply posted to YouTube.').catch(() => {});
+      ui.engagementDetail = null;
+      renderEngagement(ui.state?.engagement || {});
+    }
+  }
+
   const proposeShorts = event.target.closest('[data-propose-shorts]');
   if (proposeShorts) {
     const productionId = proposeShorts.dataset.proposeShorts;
@@ -1000,6 +1335,41 @@ document.addEventListener('click', async event => {
         method: 'POST', body: JSON.stringify({ count: 3, replace: replacing })
       });
       await refreshContentDialog(productionId, 'Three local Short drafts created from the current scene timeline.');
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+    return;
+  }
+
+  const discoverabilityRun = event.target.closest('[data-discoverability-run]');
+  if (discoverabilityRun) {
+    const productionId = discoverabilityRun.dataset.discoverabilityRun;
+    try {
+      await api(`/api/content/${encodeURIComponent(productionId)}/discoverability/run`, {
+        method: 'POST', body: JSON.stringify({ platform: 'youtube' })
+      });
+      await refreshContentDialog(productionId, 'Discoverability preflight refreshed. Findings remain advisory until reviewed.');
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+    return;
+  }
+
+  const discoverabilityReview = event.target.closest('[data-discoverability-accept], [data-discoverability-dismiss]');
+  if (discoverabilityReview) {
+    const card = discoverabilityReview.closest('[data-discoverability-finding]');
+    const productionId = $('#content-review-form')?.dataset.productionId;
+    if (!card || !productionId) return;
+    const status = discoverabilityReview.matches('[data-discoverability-dismiss]') ? 'dismissed' : 'accepted';
+    const reason = status === 'dismissed'
+      ? (prompt('Why is this finding a false positive? The reason will be retained on future matching audits.') || '')
+      : '';
+    if (status === 'dismissed' && !reason) return;
+    try {
+      await api(`/api/discoverability/findings/${encodeURIComponent(card.dataset.discoverabilityFinding)}`, {
+        method: 'PATCH', body: JSON.stringify({ status, reason })
+      });
+      await refreshContentDialog(productionId, status === 'dismissed' ? 'Finding dismissed with reviewer evidence.' : 'Finding kept as an actionable recommendation.');
     } catch (error) {
       showToast(error.message, 'error');
     }
@@ -1201,6 +1571,11 @@ document.addEventListener('change', event => {
     ui.retentionSnapshotId = event.target.value;
     renderRetention(ui.state?.learning?.retention || {});
   }
+  if (event.target.matches('#engagement-video-select')) {
+    ui.engagementVideoId = event.target.value;
+    ui.engagementDetail = null;
+    renderEngagement(ui.state?.engagement || {});
+  }
   if (event.target.matches('[name="selectedTitleVariant"]')) {
     const title = event.target.selectedOptions[0]?.dataset.title;
     const input = $('#content-review-form [name="title"]');
@@ -1220,6 +1595,16 @@ $('#generate-button').addEventListener('click', () => $('#generate-dialog').show
 $('#add-idea-button').addEventListener('click', () => $('#idea-dialog').showModal());
 $('#refresh-button').addEventListener('click', () => refreshDashboard());
 $('#pipeline-filter').addEventListener('change', () => renderPipeline(ui.state?.pipeline || []));
+
+$('#experiment-create-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  await mutate('/api/experiments', 'POST', {
+    productionId: values.productionId,
+    armDurationHours: Number(values.armDurationHours),
+    minImpressions: Number(values.minImpressions)
+  }, 'Draft growth experiment created for review.').catch(() => {});
+});
 
 $('#run-readiness-button').addEventListener('click', async event => {
   const button = event.currentTarget;
@@ -1251,6 +1636,9 @@ function strategyFormData(status = ui.state?.channelStrategy?.status || 'draft')
     contentPillars: values.contentPillars.split(',').map(value => value.trim()).filter(Boolean),
     cadencePerWeek: Number(values.cadencePerWeek),
     videosPerRun: Number(values.videosPerRun),
+    targetValue: values.targetValue === '' ? null : Number(values.targetValue),
+    targetWindowDays: Number(values.targetWindowDays),
+    monthlyBudget: values.monthlyBudget === '' ? null : Number(values.monthlyBudget),
     status
   };
 }
@@ -1326,6 +1714,6 @@ $('#api-key-button').addEventListener('click', () => {
 });
 
 const initialView = location.hash.slice(1);
-if (['overview', 'operator', 'pipeline', 'calendar', 'analytics', 'readiness', 'settings'].includes(initialView)) switchView(initialView);
+if (['overview', 'operator', 'pipeline', 'calendar', 'analytics', 'engagement', 'readiness', 'settings'].includes(initialView)) switchView(initialView);
 refreshDashboard();
 setInterval(() => refreshDashboard(true), 8000);

@@ -1,6 +1,8 @@
 const { Database } = require('./database/db');
 const { Logger } = require('./utils/logger');
 const { CredentialManager } = require('./utils/credential-manager');
+const { AudienceEngagementService } = require('./utils/audience-engagement-service');
+const { DailyAutomation } = require('./schedules/daily-automation');
 const chalk = require('chalk');
 const path = require('path');
 const { ProductionReadinessService } = require('./utils/production-readiness-service');
@@ -25,6 +27,8 @@ class SystemTest {
       { name: 'Operator Workflow API', test: () => this.testOperatorWorkflowAPI() },
       { name: 'Autonomous Channel Operator', test: () => this.testAutonomousChannelOperator() },
       { name: 'Closed-loop Channel Learning', test: () => this.testChannelLearningLoop() },
+      { name: 'Controlled Growth Experiments Studio', test: () => this.testGrowthExperimentsStudio() },
+      { name: 'Outcome and ROI Studio', test: () => this.testOutcomeROIStudio() },
       { name: 'Scene-Aware Retention Studio', test: () => this.testSceneAwareRetentionStudio() },
       { name: 'Production Readiness Gate', test: () => this.testProductionReadinessGate() },
       { name: 'Durable Multi-Provider Video Generation', test: () => this.testVideoProviderLayer() },
@@ -32,6 +36,7 @@ class SystemTest {
       { name: 'Narration Reliability and Recovery', test: () => this.testNarrationReliability() },
       { name: 'Shorts Repurposing Studio', test: () => this.testShortsRepurposingStudio() },
       { name: 'Research and Provenance Desk', test: () => this.testProvenanceDesk() },
+      { name: 'DarkzSEO Discoverability Preflight', test: () => this.testDiscoverabilityPreflight() },
       { name: 'Resumable Generation Checkpoints', test: () => this.testResumableGenerationCheckpoints() },
       { name: 'API Validation and Security', test: () => this.testAPIValidationAndSecurity() },
       { name: 'Publishing Safety', test: () => this.testPublishingSafety() },
@@ -46,7 +51,19 @@ class SystemTest {
       { name: 'Logger System', test: () => this.testLogger() },
       { name: 'Directory Structure', test: () => this.testDirectories() },
       { name: 'Agent Loading', test: () => this.testAgentLoading() },
-      { name: 'Configuration Files', test: () => this.testConfiguration() }
+      { name: 'Configuration Files', test: () => this.testConfiguration() },
+      { name: 'Audience Comment Store', test: () => this.testAudienceCommentStore() },
+      { name: 'Engagement Insight Store', test: () => this.testEngagementInsightStore() },
+      { name: 'Reply Draft Lifecycle Store', test: () => this.testReplyDraftStore() },
+      { name: 'YouTube Scope Detection', test: () => this.testYouTubeScopeDetection() },
+      { name: 'Audience Comment Sync', test: () => this.testAudienceCommentSync() },
+      { name: 'Audience Comment Analysis', test: () => this.testAudienceCommentAnalysis() },
+      { name: 'Audience Idea Mining', test: () => this.testAudienceIdeaMining() },
+      { name: 'Reply Drafting', test: () => this.testReplyDrafting() },
+      { name: 'Reply Approval and Posting', test: () => this.testReplyApprovalAndPosting() },
+      { name: 'Engagement AI Provider Wiring', test: () => this.testEngagementAIProviderWiring() },
+      { name: 'Engagement Sync Schedule', test: () => this.testEngagementSyncSchedule() },
+      { name: 'Growth Experiment Refresh Schedule', test: () => this.testGrowthExperimentRefreshSchedule() }
     ];
 
     let passed = 0;
@@ -581,6 +598,224 @@ class SystemTest {
     }
 
     this.logger.info('Closed-loop channel learning test completed successfully');
+  }
+
+  async testGrowthExperimentsStudio() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const { GrowthExperimentService } = require('./utils/growth-experiment-service');
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-experiments-'));
+    const db = new Database();
+    db.dbPath = path.join(directory, 'experiments.db');
+    await db.initialize();
+    const productionId = 'experiment-production';
+    const thumbnails = await Promise.all(['control', 'variant-a', 'variant-b'].map(async name => {
+      const file = path.join(directory, `${name}.jpg`);
+      await fs.writeFile(file, Buffer.from(`thumbnail-${name}`));
+      return file;
+    }));
+
+    try {
+      await db.saveProductionData({
+        id: productionId, status: 'published',
+        assets: { thumbnail: { path: thumbnails[0] }, finalVideo: { path: 'fixture.mp4' } },
+        timeline: {}, scheduledPublishTime: new Date().toISOString(), priority: 50, estimatedDuration: '8:00'
+      });
+      await db.saveProductionSnapshot({
+        id: productionId,
+        strategy: { topic: 'Controlled growth' },
+        script: { title: 'Control title' },
+        thumbnail: { path: thumbnails[0] },
+        seo: { title: 'Control title', description: 'Fixture', tags: [] }
+      });
+      const sourceLearning = await db.saveLearningRecommendation({
+        fingerprint: 'growth-experiment-source', category: 'packaging',
+        title: 'Test packaging', rationale: 'CTR trails the channel baseline.',
+        evidence: { measuredVideos: 4 }, proposedChange: { experiment: 'title_thumbnail_variant' }, confidence: 'medium'
+      });
+      await db.reviewLearningRecommendation(sourceLearning.id, 'approved');
+      await db.saveContentReview(productionId, {
+        status: 'approved',
+        editorData: {
+          packagingExperiment: {
+            sourceRecommendationId: sourceLearning.id,
+            hypothesis: 'A clearer promise improves qualified clicks.',
+            titleVariants: [
+              { label: 'Control', title: 'Control title' },
+              { label: 'Clear benefit', title: 'A Clearer Automation Benefit' },
+              { label: 'Curiosity', title: 'The Automation Detail You Missed' }
+            ],
+            thumbnailVariants: [
+              { label: 'Control', path: thumbnails[0] },
+              { label: 'Clear benefit', path: thumbnails[1] },
+              { label: 'Curiosity', path: thumbnails[2] }
+            ]
+          }
+        }
+      });
+      const schedule = await db.saveScheduleEntry({
+        productionId, title: 'Control title', publishTime: new Date(Date.now() - 8 * 86400000).toISOString(),
+        status: 'published', priority: 50,
+        metadata: { seo: { title: 'Control title', description: 'Fixture', tags: [] }, thumbnail: { path: thumbnails[0] } }
+      });
+      schedule.status = 'published';
+      schedule.youtubeId = 'youtube-experiment-1';
+      schedule.youtubeUrl = 'https://www.youtube.com/watch?v=youtube-experiment-1';
+      schedule.publishedAt = new Date(Date.now() - 8 * 86400000).toISOString();
+      await db.updateScheduleEntry(schedule);
+
+      const cumulative = [
+        { impressions: 10000, clicks: 500, views: 700 },
+        { impressions: 11000, clicks: 550, views: 770 },
+        { impressions: 12000, clicks: 650, views: 860 },
+        { impressions: 13000, clicks: 690, views: 920 }
+      ];
+      let reportIndex = 0;
+      const analytics = {
+        analyzeVideoPerformance: async () => {
+          const point = cumulative[Math.min(reportIndex++, cumulative.length - 1)];
+          return {
+            analytics: {
+              simulated: false,
+              views: { totalViews: point.views, totalImpressions: point.impressions, averageCTR: point.clicks / point.impressions * 100 },
+              watchTime: { totalWatchTime: point.views * 4, averageViewPercentage: 55 },
+              engagement: { engagementRate: 4.5 },
+              outcomes: { netSubscribers: Math.floor(point.views / 100), estimatedRevenue: point.views / 100 }
+            },
+            thumbnailMetrics: { impressions: point.impressions, clickThroughRate: point.clicks / point.impressions * 100 }
+          };
+        }
+      };
+      const applied = [];
+      const publishing = {
+        applyVideoPackaging: async (videoId, packaging) => applied.push({ videoId, ...packaging })
+      };
+      let clock = Date.now();
+      const service = new GrowthExperimentService(db, analytics, publishing, { now: () => new Date(clock) });
+      let experiment = await service.create({ productionId, armDurationHours: 24, minImpressions: 100 });
+      if (experiment.status !== 'draft' || experiment.arms.length !== 3 || !experiment.arms[0].isControl) {
+        throw new Error('Experiment plan did not persist a control and complete variant arms');
+      }
+
+      let confirmationBlocked = false;
+      try { await service.approve(experiment.id); } catch (error) { confirmationBlocked = error.code === 'EXPERIMENT_CONFIRMATION_REQUIRED'; }
+      if (!confirmationBlocked) throw new Error('Experiment approval did not require explicit confirmation');
+      experiment = await service.approve(experiment.id, { confirmed: true });
+      experiment = await service.start(experiment.id, { confirmed: true });
+      if (experiment.status !== 'running' || applied.length !== 1) throw new Error('Approved experiment did not start on its control arm');
+
+      for (let index = 0; index < 3; index++) {
+        clock += 24 * 3600000;
+        experiment = await service.refresh(experiment.id);
+      }
+      if (
+        experiment.status !== 'awaiting_winner' || !experiment.winningArmId ||
+        experiment.arms.find(arm => arm.id === experiment.winningArmId)?.label !== 'Clear benefit' ||
+        experiment.result.guardrails.passed !== true || applied.at(-1).title !== 'Control title'
+      ) {
+        throw new Error('Experiment did not select an evidence-backed winner and restore the control');
+      }
+
+      experiment = await service.adoptWinner(experiment.id, { confirmed: true });
+      const learned = (await db.listLearningRecommendations({ status: 'approved', limit: 20 }))
+        .find(item => item.evidence?.experimentId === experiment.id);
+      if (experiment.status !== 'adopted' || !learned || applied.at(-1).title !== 'A Clearer Automation Benefit') {
+        throw new Error('Winner adoption did not update packaging and approve the resulting learning');
+      }
+
+      const storedSamples = await db.listExperimentSamples(experiment.id);
+      if (storedSamples.length < 6 || storedSamples.some(sample => !Number.isFinite(sample.metrics.impressions))) {
+        throw new Error('Experiment evidence samples were not durably stored');
+      }
+    } finally {
+      await db.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+
+    this.logger.info('Controlled Growth Experiments Studio test completed successfully');
+  }
+
+  async testOutcomeROIStudio() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const { ChannelLearningEngine } = require('./utils/channel-learning-engine');
+    const { AnalyticsOptimizationAgent } = require('./agents/analytics-optimization-agent');
+    const { YouTubeAutomationAgent } = require('./index');
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-outcomes-'));
+    const db = new Database();
+    db.dbPath = path.join(directory, 'outcomes.db');
+    await db.initialize();
+
+    try {
+      const validated = new YouTubeAutomationAgent().validateChannelStrategy({
+        objective: 'Grow a durable automation audience', audience: 'Small teams',
+        contentPillars: ['Automation', 'Tool reviews'], primaryKpi: 'subscribers',
+        targetValue: 40, targetWindowDays: 28, monthlyBudget: 100,
+        outcomeCurrency: 'USD', status: 'active'
+      });
+      const strategy = await db.saveChannelStrategy(validated);
+      if (strategy.primary_kpi !== 'subscribers' || strategy.target_value !== 40 || strategy.target_window_days !== 28) {
+        throw new Error('Structured outcome strategy was not validated and persisted');
+      }
+
+      const learning = new ChannelLearningEngine(db);
+      const report = (videoId, format, subscribers, revenue) => ({
+        videoId,
+        videoDetails: { title: `${format} outcome fixture`, publishedAt: new Date(Date.now() - 8 * 86400000).toISOString() },
+        analytics: {
+          simulated: false,
+          views: { totalViews: 1000, totalImpressions: 10000, averageCTR: 5 },
+          watchTime: { averageViewPercentage: 45, averageViewDuration: 240, totalWatchTime: 4000 },
+          engagement: { engagementRate: 4 },
+          outcomes: {
+            subscribersAvailable: true, subscribersGained: subscribers + 1, subscribersLost: 1,
+            netSubscribers: subscribers, revenueAvailable: true, estimatedRevenue: revenue,
+            monetizedPlaybacks: 500, playbackBasedCpm: 8, currency: 'USD'
+          }
+        },
+        thumbnailMetrics: { impressions: 10000, clickThroughRate: 5 },
+        performance: { score: 70, grade: 'B' }
+      });
+      const context = (format, pillar) => ({
+        strategy: { topic: `${format} topic`, contentType: format, requestedLengthKey: 'medium', contentPillar: pillar },
+        script: { hook: 'A concise, outcome-aligned opening.' },
+        thumbnail: { concept: { composition: 'centered' } },
+        productionCost: { amount: 2, currency: 'USD', complete: true, providers: ['fixture-video'] }
+      });
+      await learning.capture(report('outcome-tutorial-1', 'tutorial', 12, 5), context('tutorial', 'Automation'), '7d');
+      await learning.capture(report('outcome-tutorial-2', 'tutorial', 10, 5), context('tutorial', 'Automation'), '7d');
+      await learning.capture(report('outcome-list-1', 'list', 2, 5), context('list', 'Tool reviews'), '7d');
+      await learning.capture(report('outcome-list-2', 'list', 1, 5), context('list', 'Tool reviews'), '7d');
+
+      const summary = await learning.getSummary();
+      const recommendation = summary.recommendations.find(item => item.category === 'outcome_alignment');
+      if (
+        summary.outcome.goal.id !== 'subscribers' || summary.outcome.observed !== 25 ||
+        summary.outcome.progressPercent !== 62.5 || summary.outcome.economics.roi !== 150 ||
+        !recommendation || recommendation.status !== 'pending' || recommendation.proposedChange.autoApply !== false
+      ) {
+        throw new Error('Outcome evidence did not produce the expected goal scorecard and approval-gated recommendation');
+      }
+
+      const analytics = new AnalyticsOptimizationAgent(db, { getYouTubeAuth: () => ({}) });
+      analytics.youtubeAnalytics = {
+        reports: {
+          query: async ({ metrics }) => {
+            if (metrics.includes('estimatedRevenue')) throw new Error('not monetized');
+            return { data: { rows: [[7, 2]] } };
+          }
+        }
+      };
+      const outcomes = await analytics.getOutcomeAnalytics('outcome-video', '2026-08-01', '2026-08-07');
+      if (!outcomes.subscribersAvailable || outcomes.netSubscribers !== 5 || outcomes.revenueAvailable || outcomes.estimatedRevenue !== null) {
+        throw new Error('Unavailable monetization evidence was converted into a false zero');
+      }
+    } finally {
+      await db.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+
+    this.logger.info('Outcome and ROI Studio test completed successfully');
   }
 
   async testSceneAwareRetentionStudio() {
@@ -1474,6 +1709,129 @@ class SystemTest {
     this.logger.info('Research and provenance desk test completed successfully');
   }
 
+  async testDiscoverabilityPreflight() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const { DiscoverabilityService } = require('./utils/discoverability-service');
+    const { OperatorService } = require('./utils/operator-service');
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-discoverability-'));
+    const db = new Database();
+    db.dbPath = path.join(directory, 'discoverability.db');
+    await db.initialize();
+    const productionId = 'prod-discoverability-test';
+    const fakeAdapter = {
+      audit: async content => ({
+        schemaVersion: '1.0',
+        engine: { name: 'darkzseo', version: '1.4.0' },
+        mode: 'content',
+        target: content.id,
+        status: 'attention_required',
+        summary: {
+          severity: { CRITICAL: 0, HIGH: 1, MEDIUM: 0, LOW: 0, INFO: 0 },
+          category: { SEO: 0, GEO: 1, AIO: 0, AEO: 0 }
+        },
+        findings: [{
+          ruleId: 'geo.trust_network', category: 'GEO', severity: 'HIGH',
+          applicability: ['youtube', 'content'],
+          message: 'Trust Network: Long content lacks authority links',
+          remediation: 'Add a verified authority source.'
+        }]
+      })
+    };
+
+    try {
+      await db.saveProductionData({
+        id: productionId, status: 'needs_review', assets: {}, timeline: {},
+        scheduledPublishTime: null, priority: 50, estimatedDuration: '1:00'
+      });
+      const production = {
+        id: productionId,
+        script: { title: 'AgentTube discoverability', fullScript: 'Detailed content '.repeat(200), sections: [] },
+        seo: { title: 'AgentTube discoverability', description: 'A detailed discoverability review.', chapters: [] },
+        provenance: { sources: [] }
+      };
+      await db.saveProductionSnapshot(production);
+      const service = new DiscoverabilityService(db, { adapter: fakeAdapter });
+      const first = await service.auditProduction(production, { channel_name: 'AgentTube' });
+      if (first.engineVersion !== '1.4.0' || first.findings.length !== 1 || first.pendingCount !== 1) {
+        throw new Error('The versioned DarkzSEO report was not persisted');
+      }
+
+      const quality = await new OperatorService(db).runQualityChecks({ ...production, discoverability: first }, {});
+      const discoverabilityCheck = quality.checks.find(check => check.id === 'discoverability');
+      if (!discoverabilityCheck || discoverabilityCheck.passed || discoverabilityCheck.blocking) {
+        throw new Error('High-priority discoverability guidance was not advisory and visible');
+      }
+
+      let shortReasonRejected = false;
+      try {
+        await service.reviewFinding(first.findings[0].id, { status: 'dismissed', reason: 'no' });
+      } catch (error) {
+        shortReasonRejected = /at least 5/.test(error.message);
+      }
+      if (!shortReasonRejected) throw new Error('A false-positive dismissal without reviewer evidence was accepted');
+
+      await service.reviewFinding(first.findings[0].id, { status: 'dismissed', reason: 'The cited source is attached in the approved evidence desk.' });
+      const second = await service.auditProduction(production, { channel_name: 'AgentTube' });
+      if (second.findings[0].reviewStatus !== 'dismissed' || second.pendingCount !== 0) {
+        throw new Error('Finding review evidence did not carry forward across matching audits');
+      }
+      const reviewedQuality = await new OperatorService(db).runQualityChecks({ ...production, discoverability: second }, {});
+      if (!reviewedQuality.checks.find(check => check.id === 'discoverability' && check.passed)) {
+        throw new Error('A dismissed false positive remained an actionable quality warning');
+      }
+
+      const { YouTubeAutomationAgent } = require('./index');
+      const apiAgent = new YouTubeAutomationAgent();
+      apiAgent.db = db;
+      apiAgent.operator = new OperatorService(db);
+      apiAgent.discoverability = service;
+      apiAgent.setupAPI();
+      const server = await new Promise(resolve => {
+        const listener = apiAgent.app.listen(0, '127.0.0.1', () => resolve(listener));
+      });
+      try {
+        const address = server.address();
+        const apiHeaders = { 'content-type': 'application/json', ...(process.env.API_KEY ? { 'x-api-key': process.env.API_KEY } : {}) };
+        const runResponse = await fetch(`http://127.0.0.1:${address.port}/api/content/${productionId}/discoverability/run`, {
+          method: 'POST', headers: apiHeaders, body: JSON.stringify({ platform: 'youtube' })
+        });
+        const runPayload = await runResponse.json();
+        if (!runResponse.ok || runPayload.audit?.schemaVersion !== '1.0' || !runPayload.result?.discoverability) {
+          throw new Error('Discoverability run API did not return the persisted versioned audit');
+        }
+        const apiFinding = runPayload.audit.findings[0];
+        const reviewResponse = await fetch(`http://127.0.0.1:${address.port}/api/discoverability/findings/${apiFinding.id}`, {
+          method: 'PATCH', headers: apiHeaders, body: JSON.stringify({ status: 'accepted' })
+        });
+        const reviewPayload = await reviewResponse.json();
+        if (!reviewResponse.ok || reviewPayload.result?.finding?.reviewStatus !== 'accepted') {
+          throw new Error('Discoverability review API did not persist the operator decision');
+        }
+      } finally {
+        await new Promise(resolve => server.close(resolve));
+      }
+
+      const unavailableService = new DiscoverabilityService(db, {
+        adapter: { audit: async () => { const error = new Error('Python is not installed'); error.code = 'DARKZSEO_UNAVAILABLE'; throw error; } }
+      });
+      const unavailable = await unavailableService.auditProduction(production, { channel_name: 'AgentTube' });
+      if (unavailable.status !== 'unavailable' || unavailable.errorCode !== 'DARKZSEO_UNAVAILABLE' || unavailable.findings.length !== 0) {
+        throw new Error('An unavailable DarkzSEO runtime was not stored explicitly');
+      }
+      const unavailableQuality = await new OperatorService(db).runQualityChecks({ ...production, discoverability: unavailable }, {});
+      const unavailableCheck = unavailableQuality.checks.find(check => check.id === 'discoverability');
+      if (!unavailableCheck || unavailableCheck.passed || unavailableCheck.blocking) {
+        throw new Error('DarkzSEO runtime availability did not remain an explicit non-blocking check');
+      }
+    } finally {
+      await db.close();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+
+    this.logger.info('DarkzSEO discoverability preflight test completed successfully');
+  }
+
   async testResumableGenerationCheckpoints() {
     const fs = require('fs').promises;
     const os = require('os');
@@ -2025,9 +2383,13 @@ class SystemTest {
 
   async testGeminiMediaProvider() {
     const { AIVideoGenerator } = require('./utils/ai-video-generator');
+    const fs = require('fs').promises;
+    const os = require('os');
+    const sharp = require('sharp');
 
     const envKeys = ['OPENAI_API_KEY', 'GEMINI_API_KEY', 'REPLICATE_API_KEY', 'ELEVENLABS_API_KEY'];
     const savedEnv = {};
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-gemini-image-'));
     for (const key of envKeys) {
       savedEnv[key] = process.env[key];
       delete process.env[key];
@@ -2042,6 +2404,41 @@ class SystemTest {
         throw new Error('OpenAI client initialized without a key');
       }
 
+      const thoughtImage = await sharp({
+        create: { width: 64, height: 64, channels: 3, background: '#ff0000' }
+      }).jpeg().toBuffer();
+      const finalImage = await sharp({
+        create: { width: 320, height: 180, channels: 3, background: '#0066ff' }
+      }).webp().toBuffer();
+      let imageRequest = null;
+      geminiOnly.gemini.models.generateContent = async request => {
+        imageRequest = request;
+        return {
+          candidates: [{
+            content: {
+              parts: [
+                { thought: true, inlineData: { mimeType: 'image/jpeg', data: thoughtImage.toString('base64') } },
+                { text: 'Rendering the final image.' },
+                { inlineData: { mimeType: 'image/webp', data: finalImage.toString('base64') } }
+              ]
+            }
+          }]
+        };
+      };
+
+      const outputPath = path.join(directory, 'gemini-output.png');
+      await geminiOnly.generateGeminiImage('Create a blue widescreen test image', outputPath);
+      const metadata = await sharp(outputPath).metadata();
+      if (metadata.format !== 'png' || metadata.width !== 320 || metadata.height !== 180) {
+        throw new Error('Gemini final image was not selected and normalized to the requested file format');
+      }
+      if (
+        imageRequest?.config?.responseModalities?.[0] !== 'IMAGE' ||
+        imageRequest?.config?.imageConfig?.aspectRatio !== '16:9'
+      ) {
+        throw new Error('Gemini image request did not require a widescreen image response');
+      }
+
       const none = new AIVideoGenerator({});
       if (none.gemini || none.openai) {
         throw new Error('Media services initialized without any credentials');
@@ -2054,6 +2451,7 @@ class SystemTest {
           process.env[key] = savedEnv[key];
         }
       }
+      await fs.rm(directory, { recursive: true, force: true }).catch(() => {});
     }
 
     this.logger.info('Gemini media provider selection test completed successfully');
@@ -2087,6 +2485,36 @@ class SystemTest {
       if (generator.parseDurationSeconds('2:05') !== 125 || generator.parseDurationSeconds('1:02:03') !== 3723) {
         throw new Error('Human-readable production durations are not converted to timeline seconds');
       }
+
+      const embeddedAssets = await generator.filterImageAssets(stills);
+      if (embeddedAssets.length !== stills.length || embeddedAssets.some(asset => !asset.startsWith('data:image/png;base64,'))) {
+        throw new Error('Slideshow image assets were not embedded as browser-safe image data');
+      }
+      const { chromium } = require('playwright');
+      let browser = null;
+      try {
+        browser = await chromium.launch();
+      } catch (error) {
+        if (!/Executable doesn't exist|playwright install/i.test(error.message)) throw error;
+        this.logger.warn('Chromium is not installed — verified browser-safe image embedding without the live browser assertion');
+      }
+      if (browser) {
+        try {
+          const page = await browser.newPage();
+          await page.setContent(generator.createSlideshowHTML({ title: 'Image loading test' }, embeddedAssets));
+          const imageState = await page.$$eval('.background-image', images => images.map(image => ({
+            complete: image.complete,
+            width: image.naturalWidth,
+            height: image.naturalHeight
+          })));
+          if (!imageState.length || imageState.some(image => !image.complete || !image.width || !image.height)) {
+            throw new Error('Embedded slideshow images did not load in Chromium');
+          }
+        } finally {
+          await browser.close();
+        }
+      }
+
       const videoPath = path.join(dir, 'out.mp4');
       await generator.renderSlidesToVideo(stills, 6, videoPath);
 
@@ -2277,7 +2705,9 @@ class SystemTest {
       './agents/seo-optimizer-agent',
       './agents/production-management-agent',
       './agents/publishing-scheduling-agent',
-      './agents/analytics-optimization-agent'
+      './agents/analytics-optimization-agent',
+      './utils/discoverability-service',
+      './utils/discoverability-adapters/darkzseo'
     ];
 
     for (const agentFile of agentFiles) {
@@ -2289,6 +2719,129 @@ class SystemTest {
     }
 
     this.logger.info('Agent loading test completed successfully');
+  }
+
+  async testYouTubeScopeDetection() {
+    const manager = new CredentialManager();
+    const forceSsl = 'https://www.googleapis.com/auth/youtube.force-ssl';
+    manager.tokens = { youtube: { scope: 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube' } };
+    if (manager.hasYouTubeScope(forceSsl)) throw new Error('force-ssl must not be reported before consent');
+    if (!manager.hasYouTubeScope('https://www.googleapis.com/auth/youtube')) throw new Error('Granted scopes must be detected');
+    manager.tokens.youtube.scope += ` ${forceSsl}`;
+    if (!manager.hasYouTubeScope(forceSsl)) throw new Error('force-ssl must be detected after consent');
+    manager.tokens = {};
+    if (manager.hasYouTubeScope('https://www.googleapis.com/auth/youtube')) throw new Error('Missing tokens must report no scopes');
+  }
+
+  async testReplyDraftStore() {
+    const db = new Database();
+    await db.initialize();
+    const commentId = `rc_test_${Date.now()}`;
+    const videoId = `vid_reply_${Date.now()}`;
+    try {
+      const draft = await db.saveReplyDraft({ commentId, videoId, draftText: 'Thanks! The cache works per scene.', rationale: 'Direct question' });
+      if (!draft || draft.status !== 'proposed') throw new Error('saveReplyDraft did not create a proposed draft');
+
+      const edited = await db.updateReplyDraft(draft.id, { editedText: 'Thanks! Each scene caches separately.' });
+      if (edited.editedText !== 'Thanks! Each scene caches separately.') throw new Error('editedText was not persisted');
+
+      const replaced = await db.saveReplyDraft({ commentId, videoId, draftText: 'New draft text' });
+      if (replaced.id !== draft.id) throw new Error('Re-drafting must reuse the comment row');
+      if (replaced.editedText !== null || replaced.status !== 'proposed') throw new Error('Re-drafting must reset the lifecycle');
+
+      const postedAt = new Date().toISOString();
+      await db.updateReplyDraft(draft.id, { status: 'posted', postedCommentId: 'yt_reply_1', postedAt });
+      const posted = await db.getReplyDraft(draft.id);
+      if (posted.status !== 'posted' || posted.postedCommentId !== 'yt_reply_1') throw new Error('Posting evidence was not stored');
+
+      let blocked = false;
+      try {
+        await db.saveReplyDraft({ commentId, videoId, draftText: 'Should not overwrite' });
+      } catch (error) {
+        blocked = error.status === 409;
+      }
+      if (!blocked) throw new Error('A posted reply draft must never be replaced');
+
+      const postedCount = await db.countReplyDraftsPostedSince(new Date(Date.now() - 60000).toISOString());
+      if (postedCount < 1) throw new Error('countReplyDraftsPostedSince missed the posted draft');
+
+      const listed = await db.listReplyDrafts({ videoId, status: 'posted' });
+      if (listed.length !== 1) throw new Error('listReplyDrafts filter failed');
+    } finally {
+      await db.executeQuery('DELETE FROM reply_drafts WHERE video_id = ?', [videoId]);
+      await db.close();
+    }
+  }
+
+  async testEngagementInsightStore() {
+    const db = new Database();
+    await db.initialize();
+    const videoId = `vid_insight_${Date.now()}`;
+    try {
+      const synced = await db.saveEngagementInsight({
+        videoId, title: 'Test video', commentCount: 4,
+        lastSyncedAt: '2026-08-23T10:00:00.000Z',
+        newestCommentAt: '2026-08-23T09:00:00.000Z'
+      });
+      if (!synced || synced.videoId !== videoId) throw new Error('saveEngagementInsight did not store the row');
+
+      const analyzed = await db.saveEngagementInsight({
+        videoId, analyzedCount: 4,
+        sentiment: { method: 'ai', positive: 3, neutral: 1, negative: 0 },
+        themes: [{ title: 'Render cache questions', summary: 'Viewers ask how caching works', kind: 'question', count: 3, commentIds: ['a', 'b', 'c'] }],
+        attentionFlags: [{ commentId: 'x', categories: ['scam'], permalink: 'https://www.youtube.com/watch?v=1&lc=x' }],
+        analysisMethod: 'ai', analyzedAt: '2026-08-23T10:05:00.000Z'
+      });
+      if (analyzed.id !== synced.id) throw new Error('Insight upsert must reuse the video row, not duplicate');
+      if (analyzed.lastSyncedAt !== '2026-08-23T10:00:00.000Z') throw new Error('Merge lost the sync watermark');
+      if (analyzed.themes[0]?.count !== 3 || analyzed.sentiment.positive !== 3) throw new Error('JSON columns did not round-trip');
+      if (analyzed.attentionFlags.length !== 1) throw new Error('attention_flags did not round-trip');
+
+      const listed = await db.listEngagementInsights({ limit: 5 });
+      if (!listed.some(item => item.videoId === videoId)) throw new Error('listEngagementInsights missed the row');
+    } finally {
+      await db.executeQuery('DELETE FROM engagement_insights WHERE video_id = ?', [videoId]);
+      await db.close();
+    }
+  }
+
+  async testAudienceCommentStore() {
+    const db = new Database();
+    await db.initialize();
+    const commentId = `ac_test_${Date.now()}`;
+    const videoId = `vid_test_${Date.now()}`;
+    try {
+      const first = await db.upsertAudienceComment({
+        commentId, videoId,
+        text: 'How does the render cache work?',
+        authorName: 'Viewer One', authorChannelId: 'UC_viewer_1',
+        likeCount: 3, replyCount: 0,
+        publishedAt: new Date().toISOString()
+      });
+      if (!first || first.commentId !== commentId) throw new Error('upsertAudienceComment did not store the comment');
+      if (first.isChannelOwner !== false || first.repliedByAgent !== false) throw new Error('Boolean parsing is wrong');
+
+      const second = await db.upsertAudienceComment({
+        commentId, videoId, text: 'How does the render cache work? (edited)', likeCount: 5
+      });
+      if (second.id !== first.id) throw new Error('Re-syncing the same comment must upsert, not duplicate');
+      if (second.likeCount !== 5 || !second.text.includes('(edited)')) throw new Error('Upsert did not refresh mutable fields');
+
+      const flagged = await db.setAudienceCommentAnalysis(commentId, ['question']);
+      if (flagged.analysisState !== 'analyzed' || !flagged.flags.includes('question')) throw new Error('Analysis flags were not persisted');
+
+      const listed = await db.listAudienceComments({ videoId, topLevelOnly: true });
+      if (listed.length !== 1) throw new Error('listAudienceComments missed the top-level comment');
+
+      const counts = await db.countAudienceComments(videoId);
+      if (counts.total !== 1 || counts.topLevel !== 1) throw new Error('countAudienceComments returned wrong counts');
+
+      const replied = await db.markAudienceCommentReplied(commentId);
+      if (!replied.repliedByAgent) throw new Error('markAudienceCommentReplied did not persist');
+    } finally {
+      await db.executeQuery('DELETE FROM audience_comments WHERE video_id = ?', [videoId]);
+      await db.close();
+    }
   }
 
   async testConfiguration() {
@@ -2325,6 +2878,416 @@ class SystemTest {
     }
 
     this.logger.info('Configuration test completed successfully');
+  }
+
+  async testAudienceCommentSync() {
+    const db = new Database();
+    await db.initialize();
+    const videoId = `vid_sync_${Date.now()}`;
+    const iso = offsetMinutes => new Date(Date.now() - offsetMinutes * 60000).toISOString();
+    const thread = (id, publishedAt, replies = []) => ({
+      id,
+      snippet: {
+        totalReplyCount: replies.length,
+        topLevelComment: { id, snippet: {
+          textOriginal: `Comment ${id}`, authorDisplayName: 'Viewer',
+          authorChannelId: { value: 'UC_viewer' }, likeCount: 1, publishedAt, updatedAt: publishedAt
+        } }
+      },
+      replies: { comments: replies }
+    });
+    try {
+      const pages = [
+        { items: [thread(`${videoId}_c2`, iso(5)), thread(`${videoId}_c1`, iso(60), [{
+            id: `${videoId}_c1_r1`, snippet: {
+              textOriginal: 'A reply', authorDisplayName: 'Owner',
+              authorChannelId: { value: 'UC_channel_owner' }, likeCount: 0, publishedAt: iso(30), updatedAt: iso(30)
+            }
+          }]) ] }
+      ];
+      const service = new AudienceEngagementService(db, null, null, {
+        listCommentThreads: async () => pages[0],
+        getChannelId: async () => 'UC_channel_owner'
+      });
+
+      const first = await service.syncVideoComments(videoId, { title: 'Sync test' });
+      if (first.fetched !== 3) throw new Error(`Expected 3 stored comments, got ${first.fetched}`);
+      if (!first.insight?.newestCommentAt) throw new Error('Sync did not record the watermark');
+      const ownerReply = await db.getAudienceComment(`${videoId}_c1_r1`);
+      if (!ownerReply.isChannelOwner || ownerReply.parentCommentId !== `${videoId}_c1`) throw new Error('Reply mapping is wrong');
+
+      const second = await service.syncVideoComments(videoId, {});
+      if (second.fetched !== 0) throw new Error('Watermark must stop re-ingesting known comments');
+
+      // Refusal policy: API failure stores nothing and rethrows
+      const failing = new AudienceEngagementService(db, null, null, {
+        listCommentThreads: async () => { throw new Error('quota exceeded'); },
+        getChannelId: async () => 'UC_channel_owner'
+      });
+      let threw = false;
+      try { await failing.syncVideoComments(`${videoId}_other`, {}); } catch (_error) { threw = true; }
+      if (!threw) throw new Error('API failure must throw');
+      if (await db.getEngagementInsight(`${videoId}_other`)) throw new Error('A failed sync must store nothing');
+
+      // Disabled comments are not an error
+      const disabledError = new Error('disabled');
+      disabledError.errors = [{ reason: 'commentsDisabled' }];
+      const disabledService = new AudienceEngagementService(db, null, null, {
+        listCommentThreads: async () => { throw disabledError; },
+        getChannelId: async () => 'UC_channel_owner'
+      });
+      const disabled = await disabledService.syncVideoComments(`${videoId}_disabled`, {});
+      if (!disabled.disabled || disabled.fetched !== 0) throw new Error('commentsDisabled must be recorded, not thrown');
+
+      // Taper
+      if (service.isSyncDue(null, iso(0))) { /* never-synced is due */ } else throw new Error('Never-synced video must be due');
+      const fresh = { lastSyncedAt: iso(60) };
+      if (service.isSyncDue(fresh, iso(24 * 60))) throw new Error('A 1h-stale sync of a 1-day-old video is not due (4h taper)');
+      if (!service.isSyncDue({ lastSyncedAt: iso(5 * 60) }, iso(24 * 60))) throw new Error('A 5h-stale sync of a 1-day-old video is due');
+      if (service.isSyncDue({ lastSyncedAt: iso(13 * 60) }, iso(40 * 24 * 60))) throw new Error('Videos older than 30 days are never auto-due');
+    } finally {
+      await db.executeQuery("DELETE FROM audience_comments WHERE video_id LIKE ?", [`${videoId}%`]);
+      await db.executeQuery("DELETE FROM engagement_insights WHERE video_id LIKE ?", [`${videoId}%`]);
+      await db.close();
+    }
+  }
+
+  async testAudienceCommentAnalysis() {
+    const db = new Database();
+    await db.initialize();
+    const videoId = `vid_analysis_${Date.now()}`;
+    const seed = async (suffix, text, likeCount = 0) => db.upsertAudienceComment({
+      commentId: `${videoId}_${suffix}`, videoId, text, likeCount,
+      publishedAt: new Date().toISOString()
+    });
+    try {
+      await seed('q1', 'How do I configure the render cache?', 4);
+      await seed('q2', 'Can you explain the cache setup?', 2);
+      await seed('q3', 'What cache settings do you use?', 1);
+      await seed('scam1', 'Congratulations! Message me on telegram to claim your prize');
+      const aiResponse = JSON.stringify({
+        comments: [
+          { commentId: `${videoId}_q1`, sentiment: 'positive', flags: ['question'] },
+          { commentId: `${videoId}_q2`, sentiment: 'neutral', flags: ['question'] },
+          { commentId: `${videoId}_q3`, sentiment: 'neutral', flags: ['question'] },
+          { commentId: `${videoId}_scam1`, sentiment: 'neutral', flags: ['scam'] },
+          { commentId: 'not_a_real_comment', sentiment: 'negative', flags: ['toxic'] }
+        ],
+        themes: [
+          { title: 'Render cache setup', summary: 'Viewers want a cache configuration walkthrough', kind: 'question',
+            commentIds: [`${videoId}_q1`, `${videoId}_q2`, `${videoId}_q3`, `${videoId}_scam1`, 'not_a_real_comment'] },
+          { title: 'Bad theme', summary: 'Only one supporter', kind: 'feedback', commentIds: [`${videoId}_q1`] }
+        ]
+      });
+      const service = new AudienceEngagementService(db, null, {
+        isAvailable: () => true,
+        generateText: async () => aiResponse
+      }, {});
+
+      const insight = await service.analyzeVideo(videoId);
+      if (insight.analysisMethod !== 'ai') throw new Error('AI analysis was not recorded as ai');
+      if (insight.sentiment.positive !== 1 || insight.sentiment.neutral !== 3) throw new Error('Sentiment counts are wrong');
+      if (insight.themes.length !== 1) throw new Error('Theme normalization must drop single-comment themes');
+      if (insight.themes[0].count !== 3) throw new Error('Quarantined and unknown comment ids must not count toward themes');
+      if (insight.attentionFlags.length !== 1 || insight.attentionFlags[0].commentId !== `${videoId}_scam1`) {
+        throw new Error('Scam comment must land in attentionFlags');
+      }
+      const scam = await db.getAudienceComment(`${videoId}_scam1`);
+      if (!scam.flags.includes('scam')) throw new Error('Per-comment flags were not stored');
+
+      // parseAIJsonResponse handles fenced, embedded, and malformed output
+      if (service.parseAIJsonResponse('```json\n{"a":1}\n```')?.a !== 1) throw new Error('Fenced JSON must parse');
+      if (service.parseAIJsonResponse('noise before [1,2] noise after')?.[0] !== 1) throw new Error('Embedded arrays must parse');
+      if (service.parseAIJsonResponse('not json at all') !== null) throw new Error('Garbage must return null');
+
+      // Fallback: mechanical facts only, no themes
+      const fallbackVideo = `${videoId}_fb`;
+      await db.upsertAudienceComment({ commentId: `${fallbackVideo}_c1`, videoId: fallbackVideo, text: 'Is this real?', publishedAt: new Date().toISOString() });
+      const fallbackService = new AudienceEngagementService(db, null, { isAvailable: () => false }, {});
+      const fallback = await fallbackService.analyzeVideo(fallbackVideo);
+      if (fallback.analysisMethod !== 'fallback') throw new Error('Fallback method was not recorded');
+      if (fallback.themes.length !== 0) throw new Error('Fallback must never invent themes');
+      if (fallback.sentiment.method !== 'fallback' || 'positive' in fallback.sentiment) throw new Error('Fallback must not claim sentiment');
+      const fallbackComment = await db.getAudienceComment(`${fallbackVideo}_c1`);
+      if (!fallbackComment.flags.includes('question')) throw new Error('Fallback question detection failed');
+
+      // syncDueVideos delegates and analyzes only after a fetching sync
+      let analyzeCalls = 0;
+      const dueService = new AudienceEngagementService(db, null, { isAvailable: () => false }, {
+        listCommentThreads: async () => ({ items: [] })
+      });
+      dueService.analyzeVideo = async () => { analyzeCalls++; };
+      const results = await dueService.syncDueVideos([
+        { youtubeId: `${videoId}_due`, title: 'Due', publishedAt: new Date().toISOString(), productionId: null },
+        { youtubeId: null }
+      ]);
+      if (results.synced !== 1 || results.skipped !== 1) throw new Error(`syncDueVideos counters are wrong: ${JSON.stringify(results)}`);
+      if (analyzeCalls !== 0) throw new Error('A sync that fetched nothing must not trigger analysis');
+    } finally {
+      await db.executeQuery("DELETE FROM learning_recommendations WHERE category = 'audience_demand' AND evidence LIKE ?", [`%${videoId}%`]);
+      await db.executeQuery('DELETE FROM audience_comments WHERE video_id LIKE ?', [`${videoId}%`]);
+      await db.executeQuery('DELETE FROM engagement_insights WHERE video_id LIKE ?', [`${videoId}%`]);
+      await db.close();
+    }
+  }
+
+  async testAudienceIdeaMining() {
+    const db = new Database();
+    await db.initialize();
+    const videoId = `vid_mining_${Date.now()}`;
+    try {
+      for (const suffix of ['m1', 'm2', 'm3']) {
+        await db.upsertAudienceComment({
+          commentId: `${videoId}_${suffix}`, videoId,
+          text: `Please cover local caching next (${suffix})`, publishedAt: new Date().toISOString()
+        });
+      }
+      const service = new AudienceEngagementService(db, null, null, {});
+      const insight = {
+        videoId, title: 'Mining test', analysisMethod: 'ai',
+        themes: [
+          { title: 'Cover local caching', summary: 'Repeated requests for a caching deep-dive', kind: 'request',
+            count: 3, commentIds: [`${videoId}_m1`, `${videoId}_m2`, `${videoId}_m3`] },
+          { title: 'Too few asks', summary: 'Only two', kind: 'request', count: 2, commentIds: [`${videoId}_m1`, `${videoId}_m2`] },
+          { title: 'Praise cluster', summary: 'Nice video', kind: 'praise', count: 5, commentIds: [`${videoId}_m1`, `${videoId}_m2`, `${videoId}_m3`] }
+        ]
+      };
+      const saved = await service.refreshAudienceRecommendations(videoId, insight);
+      if (saved.length !== 1) throw new Error(`Only the >=3 request/question theme may mine an idea; got ${saved.length}`);
+      const recommendation = saved[0];
+      if (recommendation.category !== 'audience_demand') throw new Error('Category must be audience_demand');
+      if (recommendation.status !== 'pending') throw new Error('Mined ideas must be pending until reviewed');
+      if (recommendation.confidence !== 'low') throw new Error('Ask-count 3 maps to low confidence');
+      const evidence = recommendation.evidence; // parseLearningRecommendation returns it already parsed
+      if (evidence.askCount !== 3 || evidence.sampleComments.length !== 3) throw new Error('Evidence is incomplete');
+      if (!evidence.sampleComments[0].permalink.includes('&lc=')) throw new Error('Evidence must carry comment permalinks');
+      if (recommendation.proposedChange.autoEditPublishedContent !== false) throw new Error('autoEditPublishedContent must be false');
+
+      const again = await service.refreshAudienceRecommendations(videoId, insight);
+      if (again[0].id !== recommendation.id) throw new Error('Re-analysis must dedupe by fingerprint, not duplicate');
+
+      const nonAI = await service.refreshAudienceRecommendations(videoId, { ...insight, analysisMethod: 'fallback' });
+      if (nonAI.length !== 0) throw new Error('Fallback analysis must never mine ideas');
+    } finally {
+      await db.executeQuery("DELETE FROM learning_recommendations WHERE category = 'audience_demand' AND evidence LIKE ?", [`%${videoId}%`]);
+      await db.executeQuery('DELETE FROM audience_comments WHERE video_id = ?', [videoId]);
+      await db.close();
+    }
+  }
+
+  async testReplyDrafting() {
+    const db = new Database();
+    await db.initialize();
+    const videoId = `vid_draft_${Date.now()}`;
+    const seed = (suffix, text, flags, extra = {}) => db.upsertAudienceComment({
+      commentId: `${videoId}_${suffix}`, videoId, text,
+      publishedAt: new Date().toISOString(), ...extra
+    }).then(() => db.setAudienceCommentAnalysis(`${videoId}_${suffix}`, flags));
+    try {
+      await seed('q1', 'How long does a render take?', ['question']);
+      await seed('praise1', 'Great video!', ['praise']);
+      await seed('scam1', 'Claim your prize now', ['scam']);
+      await seed('own1', 'Thanks all!', [], { isChannelOwner: true });
+      await db.upsertAudienceComment({
+        commentId: `${videoId}_nested`, videoId, parentCommentId: `${videoId}_q1`,
+        text: 'Also curious?', publishedAt: new Date().toISOString()
+      });
+      await db.saveEngagementInsight({ videoId, title: 'Draft test', analysisMethod: 'ai', analyzedAt: new Date().toISOString() });
+
+      let promptSeen = '';
+      const service = new AudienceEngagementService(db, null, {
+        isAvailable: () => true,
+        generateText: async prompt => {
+          promptSeen = prompt;
+          return JSON.stringify([
+            { commentId: `${videoId}_q1`, reply: 'About two minutes per scene on default settings.', rationale: 'Direct question' },
+            { commentId: `${videoId}_praise1`, reply: 'Visit http://spam.example now', rationale: 'Link should be dropped' },
+            { commentId: `${videoId}_scam1`, reply: 'Should never appear', rationale: 'Quarantined' }
+          ]);
+        }
+      }, {});
+
+      const drafts = await service.draftReplies(videoId);
+      if (drafts.length !== 1) throw new Error(`Expected 1 usable draft (link + quarantined dropped), got ${drafts.length}`);
+      if (drafts[0].commentId !== `${videoId}_q1` || drafts[0].status !== 'proposed') throw new Error('Draft shape is wrong');
+      if (promptSeen.includes(`${videoId}_scam1`) || promptSeen.includes(`${videoId}_own1`) || promptSeen.includes(`${videoId}_nested`)) {
+        throw new Error('Quarantined, owner, and nested comments must never reach the draft prompt');
+      }
+
+      const noAI = new AudienceEngagementService(db, null, { isAvailable: () => false }, {});
+      let status = 0;
+      try { await noAI.draftReplies(videoId); } catch (error) { status = error.status; }
+      if (status !== 503) throw new Error('Drafting without AI must throw 503');
+
+      await db.saveEngagementInsight({ videoId: `${videoId}_fb`, analysisMethod: 'fallback' });
+      status = 0;
+      try { await service.draftReplies(`${videoId}_fb`); } catch (error) { status = error.status; }
+      if (status !== 409) throw new Error('Drafting without an AI analysis must throw 409');
+    } finally {
+      await db.executeQuery('DELETE FROM audience_comments WHERE video_id = ?', [videoId]);
+      await db.executeQuery('DELETE FROM engagement_insights WHERE video_id LIKE ?', [`${videoId}%`]);
+      await db.executeQuery('DELETE FROM reply_drafts WHERE video_id = ?', [videoId]);
+      await db.close();
+    }
+  }
+
+  async testReplyApprovalAndPosting() {
+    const db = new Database();
+    await db.initialize();
+    const videoId = `vid_post_${Date.now()}`;
+    const commentId = `${videoId}_target`;
+    const scopedCredentials = { hasYouTubeScope: scope => scope === 'https://www.googleapis.com/auth/youtube.force-ssl' };
+    try {
+      await db.upsertAudienceComment({ commentId, videoId, text: 'Question?', publishedAt: new Date().toISOString() });
+      const makeDraft = () => db.saveReplyDraft({ commentId, videoId, draftText: 'Answer text' });
+
+      let draft = await makeDraft();
+      const posts = [];
+      const service = new AudienceEngagementService(db, scopedCredentials, null, {
+        insertComment: async ({ parentId, text }) => { posts.push({ parentId, text }); return { id: 'yt_posted_1' }; }
+      });
+
+      let code = null;
+      try { await service.approveReplyDraft(draft.id, {}); } catch (error) { code = error.code; }
+      if (code !== 'REPLY_APPROVAL_REQUIRED') throw new Error('Approval must require confirmed: true');
+
+      const unscoped = new AudienceEngagementService(db, { hasYouTubeScope: () => false }, null, {});
+      code = null;
+      try { await unscoped.approveReplyDraft(draft.id, { confirmed: true }); } catch (error) { code = error.code; }
+      if (code !== 'REPLY_SCOPE_REQUIRED') throw new Error('Missing force-ssl scope must block posting');
+      const gate = unscoped.postingEnabled();
+      if (gate.enabled || gate.reason !== 'missing_scope') {
+        throw new Error('postingEnabled must report missing_scope');
+      }
+
+      const posted = await service.approveReplyDraft(draft.id, { confirmed: true, editedText: 'Edited answer' });
+      if (posted.status !== 'posted' || posted.postedCommentId !== 'yt_posted_1') throw new Error('Posting evidence missing');
+      if (posts[0].parentId !== commentId || posts[0].text !== 'Edited answer') throw new Error('The edited text must be what posts');
+      if (!(await db.getAudienceComment(commentId)).repliedByAgent) throw new Error('Source comment must be marked replied');
+
+      let status = null;
+      try { await service.approveReplyDraft(draft.id, { confirmed: true }); } catch (error) { status = error.status; }
+      if (status !== 409) throw new Error('A posted draft must not post twice');
+
+      // Failure path: failed + reason, manual retry allowed
+      const failingComment = `${videoId}_fail`;
+      await db.upsertAudienceComment({ commentId: failingComment, videoId, text: 'Other?', publishedAt: new Date().toISOString() });
+      const failDraft = await db.saveReplyDraft({ commentId: failingComment, videoId, draftText: 'Will fail' });
+      const failing = new AudienceEngagementService(db, scopedCredentials, null, {
+        insertComment: async () => { throw new Error('commentThreadNotFound'); }
+      });
+      status = null;
+      try { await failing.approveReplyDraft(failDraft.id, { confirmed: true }); } catch (error) { status = error.status; }
+      if (status !== 502) throw new Error('A failed post must throw 502');
+      const failed = await db.getReplyDraft(failDraft.id);
+      if (failed.status !== 'failed' || !failed.failureReason.includes('commentThreadNotFound')) throw new Error('Failure evidence missing');
+
+      // Daily cap
+      const capped = new AudienceEngagementService(db, scopedCredentials, null, { dailyReplyCap: 1, insertComment: async () => ({ id: 'x' }) });
+      status = null;
+      try { await capped.approveReplyDraft(failDraft.id, { confirmed: true }); } catch (error) { status = error.status; }
+      if (status !== 429) throw new Error('The daily reply cap must block further posts');
+
+      // updateReplyDraft rules
+      const edited = await service.updateReplyDraft(failDraft.id, { editedText: 'Retry text' });
+      if (edited.status !== 'proposed' || edited.editedText !== 'Retry text') throw new Error('Editing must re-open a failed draft');
+      const discarded = await service.updateReplyDraft(failDraft.id, { discard: true });
+      if (discarded.status !== 'discarded') throw new Error('Discard failed');
+
+      // Summary
+      const summary = await service.getSummary();
+      if (summary.postedToday < 1) throw new Error('getSummary missed postedToday');
+      if (summary.postingEnabled !== true) throw new Error('getSummary posting flag is wrong');
+      if (!summary.evidencePolicy.includes('operator approval')) throw new Error('evidencePolicy text missing');
+    } finally {
+      await db.executeQuery('DELETE FROM audience_comments WHERE video_id = ?', [videoId]);
+      await db.executeQuery('DELETE FROM reply_drafts WHERE video_id = ?', [videoId]);
+      await db.executeQuery('DELETE FROM engagement_insights WHERE video_id = ?', [videoId]);
+      await db.close();
+    }
+  }
+
+  async testEngagementAIProviderWiring() {
+    const { AITextService } = require('./utils/ai-text-service');
+
+    // Regression: index.js must hand AITextService the unwrapped credentials object
+    // (manager.credentials), the shape the walkthrough writes to credentials.json.
+    // Passing the CredentialManager itself leaves the engagement studio permanently
+    // in fallback mode on installs with no provider environment variables.
+    const savedEnv = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const configured = new AITextService({
+        aiProvider: { provider: 'openai', apiKey: 'test-key', model: 'gpt-5.6' }
+      });
+      if (!configured.isAvailable()) {
+        throw new Error('AITextService must initialize from a credentials-file aiProvider config');
+      }
+
+      const wrapped = new AITextService({
+        credentials: { aiProvider: { provider: 'openai', apiKey: 'test-key', model: 'gpt-5.6' } }
+      });
+      if (wrapped.isAvailable()) {
+        throw new Error('A CredentialManager-shaped argument must not look configured; index.js has to unwrap it');
+      }
+    } finally {
+      if (savedEnv === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = savedEnv;
+    }
+  }
+
+  async testEngagementSyncSchedule() {
+    let captured = null;
+    const events = [];
+    const fakeDb = {
+      getAllRows: async () => [
+        { youtube_id: 'vid_sched_1', title: 'Scheduled video', published_at: '2026-08-22T00:00:00.000Z', production_id: 'prod_1' }
+      ],
+      executeQuery: async () => ({}),
+      generateId: prefix => `${prefix}_test`
+    };
+    const scheduler = new DailyAutomation({}, fakeDb, {
+      generateContent: async () => {},
+      engagement: {
+        syncDueVideos: async videos => {
+          captured = videos;
+          return { synced: 1, skipped: 0, failed: 0, analyzed: 1 };
+        }
+      }
+    });
+    scheduler.logAutomationEvent = async (type, status, data) => { events.push({ type, status, data }); };
+    await scheduler.collectAudienceEngagement();
+    if (!captured || captured[0].youtubeId !== 'vid_sched_1') throw new Error('The scheduler did not map youtube_id');
+    if (captured[0].productionId !== 'prod_1' || captured[0].publishedAt !== '2026-08-22T00:00:00.000Z') {
+      throw new Error('The scheduler did not map production/publish fields');
+    }
+    if (!events.some(event => event.type === 'audience_engagement_sync' && event.status === 'success')) {
+      throw new Error('The engagement sweep must log an automation event');
+    }
+    const noService = new DailyAutomation({}, fakeDb, { generateContent: async () => {} });
+    await noService.collectAudienceEngagement(); // must be a silent no-op, not a crash
+  }
+
+  async testGrowthExperimentRefreshSchedule() {
+    const events = [];
+    let refreshes = 0;
+    const scheduler = new DailyAutomation({}, {}, {
+      experiments: {
+        refreshDue: async () => {
+          refreshes++;
+          return { running: 2, refreshed: 1, failed: 0 };
+        }
+      }
+    });
+    scheduler.logAutomationEvent = async (type, status, data) => events.push({ type, status, data });
+    await scheduler.refreshGrowthExperiments();
+    if (refreshes !== 1 || !events.some(event =>
+      event.type === 'growth_experiment_refresh' && event.status === 'success' && event.data.refreshed === 1
+    )) {
+      throw new Error('The scheduler did not refresh and record due controlled experiments');
+    }
+    const noService = new DailyAutomation({}, {}, {});
+    await noService.refreshGrowthExperiments();
   }
 }
 

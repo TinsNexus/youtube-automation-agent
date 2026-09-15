@@ -23,6 +23,10 @@ const { GenerationRecoveryService, GENERATION_STAGES } = require('./utils/genera
 const { ProvenanceService } = require('./utils/provenance-service');
 const { SceneRepairService } = require('./utils/scene-repair-service');
 const { ShortsRepurposingService } = require('./utils/shorts-repurposing-service');
+const { AudienceEngagementService } = require('./utils/audience-engagement-service');
+const { GrowthExperimentService } = require('./utils/growth-experiment-service');
+const { AITextService } = require('./utils/ai-text-service');
+const { DiscoverabilityService } = require('./utils/discoverability-service');
 const { version } = require('./package.json');
 const chalk = require('chalk');
 
@@ -44,6 +48,9 @@ class YouTubeAutomationAgent {
     this.provenance = null;
     this.scenes = null;
     this.shorts = null;
+    this.engagement = null;
+    this.experiments = null;
+    this.discoverability = null;
     this.setupRequired = false;
   }
 
@@ -63,6 +70,7 @@ class YouTubeAutomationAgent {
       });
       this.operator = new OperatorService(this.db);
       this.provenance = new ProvenanceService(this.db);
+      this.discoverability = new DiscoverabilityService(this.db, { logger: this.logger });
       this.autonomous = new AutonomousChannelOperator(this.db, {
         researchAndPlan: strategy => {
           if (!this.agents.strategy) throw new Error('The strategy agent is not configured');
@@ -101,6 +109,18 @@ class YouTubeAutomationAgent {
         { logger: this.logger }
       );
       this.shorts = new ShortsRepurposingService(this.db, this.agents.publishing, { logger: this.logger });
+      this.engagement = new AudienceEngagementService(
+        this.db,
+        this.credentials,
+        new AITextService(this.credentials?.credentials || {}),
+        { logger: this.logger }
+      );
+      this.experiments = new GrowthExperimentService(
+        this.db,
+        this.agents.analytics,
+        this.agents.publishing,
+        { logger: this.logger }
+      );
 
       // Show which pipeline stages will run for real vs. be simulated
       const capabilities = await this.logCapabilitySummary();
@@ -114,7 +134,9 @@ class YouTubeAutomationAgent {
       // Initialize scheduler
       this.logger.info('Setting up automation scheduler...');
       this.scheduler = new DailyAutomation(this.agents, this.db, {
-        generateContent: input => this.queueScheduledContent(input)
+        generateContent: input => this.queueScheduledContent(input),
+        engagement: this.engagement,
+        experiments: this.experiments
       });
       await this.scheduler.initialize();
 
@@ -265,7 +287,7 @@ class YouTubeAutomationAgent {
       if (typeof body.strategyContext !== 'object' || Array.isArray(body.strategyContext)) {
         return { valid: false, status: 400, error: 'strategyContext must be an object' };
       }
-      const limits = { angle: 500, rationale: 1000, audience: 500, objective: 1000, valueProposition: 1000, constraints: 2000 };
+      const limits = { angle: 500, rationale: 1000, audience: 500, objective: 1000, valueProposition: 1000, constraints: 2000, pillar: 100 };
       value.strategyContext = {};
       for (const [key, max] of Object.entries(limits)) {
         if (body.strategyContext[key] === undefined || body.strategyContext[key] === null) continue;
@@ -310,11 +332,26 @@ class YouTubeAutomationAgent {
     const defaultFormat = text('defaultFormat', current.default_format || 'explainer', 20).toLowerCase();
     const defaultLength = text('defaultLength', current.default_length || 'medium', 20).toLowerCase();
     const status = text('status', current.status || 'draft', 20).toLowerCase();
+    const primaryKpi = text('primaryKpi', current.primary_kpi || 'views', 30).toLowerCase();
+    const outcomeCurrency = text('outcomeCurrency', current.outcome_currency || 'USD', 3).toUpperCase();
     if (!['explainer', 'tutorial', 'list', 'review', 'story'].includes(defaultFormat)) {
       throw new Error('defaultFormat is not supported');
     }
     if (!['short', 'medium', 'long'].includes(defaultLength)) throw new Error('defaultLength is not supported');
     if (!['draft', 'active', 'paused'].includes(status)) throw new Error('status must be draft, active, or paused');
+    if (!['views', 'watch_hours', 'subscribers', 'engagement', 'revenue'].includes(primaryKpi)) {
+      throw new Error('primaryKpi is not supported');
+    }
+    if (!/^[A-Z]{3}$/.test(outcomeCurrency)) throw new Error('outcomeCurrency must be a three-letter currency code');
+    const optionalNumber = (key, fallback, min, max) => {
+      const raw = body[key] ?? fallback;
+      if (raw === undefined || raw === null || raw === '') return null;
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < min || value > max) {
+        throw new Error(`${key} must be a number from ${min} to ${max}`);
+      }
+      return value;
+    };
 
     return {
       objective,
@@ -326,6 +363,11 @@ class YouTubeAutomationAgent {
       defaultFormat,
       defaultLength,
       successMetric: text('successMetric', current.success_metric, 300),
+      primaryKpi,
+      targetValue: optionalNumber('targetValue', current.target_value, 0.01, 1000000000),
+      targetWindowDays: integer('targetWindowDays', current.target_window_days || 28, 7, 365),
+      monthlyBudget: optionalNumber('monthlyBudget', current.monthly_budget, 0, 10000000),
+      outcomeCurrency,
       constraints: text('constraints', current.constraints, 2000),
       status
     };
@@ -386,6 +428,17 @@ class YouTubeAutomationAgent {
       }
     });
 
+    this.app.get('/api/outcomes', async (_req, res) => {
+      try {
+        const learning = this.agents.analytics?.getLearningSummary
+          ? await this.agents.analytics.getLearningSummary()
+          : { outcome: null };
+        return res.json({ success: true, result: learning.outcome || null });
+      } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     // Get upcoming schedule
     this.app.get('/schedule', async (req, res) => {
       try {
@@ -421,7 +474,7 @@ class YouTubeAutomationAgent {
 
     this.app.get('/api/dashboard', async (_req, res) => {
       try {
-        const [stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation, channelStrategy, operatorRuns, readiness] = await Promise.all([
+        const [stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation, channelStrategy, operatorRuns, readiness, engagement, experiments] = await Promise.all([
           this.db.getStats(),
           this.db.listGenerationJobs(20),
           this.db.getPipelineOverview(50),
@@ -444,12 +497,23 @@ class YouTubeAutomationAgent {
           this.db.listOperatorRuns(10),
           this.readiness
             ? this.readiness.getSummary()
-            : Promise.resolve({ status: 'unverified', stale: false, blockingFailures: [], checks: [] })
+            : Promise.resolve({ status: 'unverified', stale: false, blockingFailures: [], checks: [] }),
+          this.engagement
+            ? this.engagement.getSummary()
+            : Promise.resolve({
+                videosTracked: 0, pendingDrafts: 0, postedToday: 0, needsAttentionCount: 0,
+                pendingAudienceIdeas: 0, postingEnabled: false, postingDisabledReason: 'setup_required',
+                insights: [], recentThemes: [],
+                evidencePolicy: 'Comments are fetched read-only from YouTube. Replies post only after operator approval, and fallback analysis never proposes drafts or ideas.'
+              }),
+          this.experiments
+            ? this.experiments.getSummary()
+            : Promise.resolve({ experiments: [], candidates: [], activeCount: 0, awaitingDecisionCount: 0, evidencePolicy: 'Finish setup to create a controlled growth experiment.' })
         ]);
         if (this.telemetry) void this.telemetry.sync(activation);
         res.json({
           stats, jobs, pipeline, schedule, events, notifications, profile, settings, ideas, analytics, learning, activation,
-          channelStrategy, operatorRuns, readiness,
+          channelStrategy, operatorRuns, readiness, engagement, experiments,
           system: {
             initialized: this.isInitialized,
             setupRequired: this.setupRequired,
@@ -897,6 +961,89 @@ class YouTubeAutomationAgent {
       return res.json({ success: true, result: recommendation });
     });
 
+    this.app.post('/api/content/:productionId/discoverability/run', protect, async (req, res) => {
+      try {
+        const bundle = await this.db.getProductionBundle(req.params.productionId);
+        if (!bundle) return res.status(404).json({ success: false, error: 'Content not found' });
+        const profile = await this.db.getChannelProfile() || {};
+        const audit = await this.discoverability.auditProduction(bundle, profile, req.body?.platform || 'youtube');
+        if (bundle.review_status !== 'approved' && !bundle.schedule) {
+          const updated = await this.db.getProductionBundle(bundle.id);
+          const quality = await this.operator.runQualityChecks({
+            ...updated,
+            scheduledPublishTime: updated.scheduled_publish_time
+          }, profile);
+          await this.db.saveContentReview(bundle.id, {
+            status: quality.passed ? 'needs_review' : 'needs_attention',
+            editorData: updated.editorData,
+            qualityChecks: quality.checks,
+            reviewNotes: quality.passed ? null : `Blocking checks failed: ${quality.blockingFailures.join(', ')}`,
+            reviewedAt: null
+          });
+        }
+        const result = await this.db.getProductionBundle(bundle.id);
+        return res.json({ success: true, result: this.decorateContentBundle(result), audit });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.patch('/api/discoverability/findings/:findingId', protect, async (req, res) => {
+      try {
+        const finding = await this.discoverability.reviewFinding(req.params.findingId, req.body || {});
+        const audit = await this.db.getLatestDiscoverabilityAudit(finding.production_id, finding.platform);
+        return res.json({ success: true, result: { finding, audit } });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get('/api/experiments', async (_req, res) => {
+      try {
+        const summary = this.experiments
+          ? await this.experiments.getSummary()
+          : { experiments: [], candidates: [], activeCount: 0, awaitingDecisionCount: 0 };
+        return res.json({ success: true, result: summary });
+      } catch (error) {
+        return res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/experiments', protect, async (req, res) => {
+      try {
+        if (!this.experiments) return res.status(503).json({ error: 'Finish setup before creating experiments' });
+        const experiment = await this.experiments.create(req.body || {});
+        return res.status(201).json({ success: true, result: experiment });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
+      }
+    });
+
+    this.app.post('/api/experiments/:experimentId/:action', protect, async (req, res) => {
+      try {
+        if (!this.experiments) return res.status(503).json({ error: 'Finish setup before controlling experiments' });
+        const actions = {
+          approve: () => this.experiments.approve(req.params.experimentId, req.body),
+          start: () => this.experiments.start(req.params.experimentId, req.body),
+          refresh: () => this.experiments.refresh(req.params.experimentId),
+          adopt: () => this.experiments.adoptWinner(req.params.experimentId, req.body),
+          cancel: () => this.experiments.cancel(req.params.experimentId, req.body)
+        };
+        if (!actions[req.params.action]) return res.status(400).json({ error: 'Unsupported experiment action' });
+        const experiment = await actions[req.params.action]();
+        await this.operator.notify({
+          type: 'growth_experiment_updated',
+          level: ['adopt', 'approve'].includes(req.params.action) ? 'success' : 'info',
+          title: `Growth experiment ${req.params.action}`,
+          message: experiment.title,
+          data: { experimentId: experiment.id, status: experiment.status }
+        });
+        return res.json({ success: true, result: experiment });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
+      }
+    });
+
     this.app.get('/api/retention/:videoId', async (req, res) => {
       const videoId = String(req.params.videoId || '').trim();
       if (!/^[A-Za-z0-9_-]{1,100}$/.test(videoId)) {
@@ -927,6 +1074,88 @@ class YouTubeAutomationAgent {
         });
       } catch (error) {
         return res.status(error.status || 400).json({ error: error.message });
+      }
+    });
+
+    const ENGAGEMENT_VIDEO_ID = /^[A-Za-z0-9_-]{1,100}$/;
+
+    this.app.get('/api/engagement/:videoId', async (req, res) => {
+      try {
+        const videoId = String(req.params.videoId || '').trim();
+        if (!ENGAGEMENT_VIDEO_ID.test(videoId)) {
+          return res.status(400).json({ error: 'A valid YouTube video ID is required' });
+        }
+        const [insight, comments, drafts] = await Promise.all([
+          this.db.getEngagementInsight(videoId),
+          this.db.listAudienceComments({ videoId, limit: 200 }),
+          this.db.listReplyDrafts({ videoId, limit: 100 })
+        ]);
+        return res.json({ success: true, result: { insight, comments, drafts } });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/engagement/:videoId/sync', protect, async (req, res) => {
+      try {
+        if (!this.engagement) return res.status(503).json({ error: 'Audience engagement requires completed setup' });
+        const videoId = String(req.params.videoId || '').trim();
+        if (!ENGAGEMENT_VIDEO_ID.test(videoId)) {
+          return res.status(400).json({ error: 'A valid YouTube video ID is required' });
+        }
+        const sync = await this.engagement.syncVideoComments(videoId, req.body || {});
+        const insight = sync.fetched > 0 || req.body?.analyze === true
+          ? await this.engagement.analyzeVideo(videoId)
+          : sync.insight;
+        return res.status(202).json({ success: true, result: { ...sync, insight } });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
+      }
+    });
+
+    this.app.post('/api/engagement/:videoId/draft-replies', protect, async (req, res) => {
+      try {
+        if (!this.engagement) return res.status(503).json({ error: 'Audience engagement requires completed setup' });
+        const videoId = String(req.params.videoId || '').trim();
+        if (!ENGAGEMENT_VIDEO_ID.test(videoId)) {
+          return res.status(400).json({ error: 'A valid YouTube video ID is required' });
+        }
+        const result = await this.engagement.draftReplies(videoId, req.body || {});
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
+      }
+    });
+
+    this.app.patch('/api/engagement/replies/:draftId', protect, async (req, res) => {
+      try {
+        if (!this.engagement) return res.status(503).json({ error: 'Audience engagement requires completed setup' });
+        const result = await this.engagement.updateReplyDraft(req.params.draftId, req.body || {});
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
+      }
+    });
+
+    this.app.post('/api/engagement/replies/:draftId/approve', protect, async (req, res) => {
+      try {
+        if (!this.engagement) return res.status(503).json({ error: 'Audience engagement requires completed setup' });
+        const result = await this.engagement.approveReplyDraft(req.params.draftId, req.body || {});
+        // The reply is already live on YouTube; a notification failure must not report an error.
+        try {
+          await this.operator.notify({
+            type: 'audience_reply_posted',
+            level: 'success',
+            title: 'Audience reply posted',
+            message: `A reply was posted on video ${result.videoId}`,
+            data: { draftId: result.id, videoId: result.videoId, postedCommentId: result.postedCommentId }
+          });
+        } catch (notifyError) {
+          this.logger.warn(`Posted reply notification failed: ${notifyError.message}`);
+        }
+        return res.json({ success: true, result });
+      } catch (error) {
+        return res.status(error.status || 400).json({ success: false, error: error.message, code: error.code });
       }
     });
 
@@ -1201,6 +1430,7 @@ class YouTubeAutomationAgent {
       generated.channelGoal = strategyContext.objective || profile.goal || null;
       generated.channelValueProposition = strategyContext.valueProposition || null;
       generated.channelConstraints = strategyContext.constraints || null;
+      generated.contentPillar = strategyContext.pillar || null;
       generated.callToAction = profile.call_to_action || null;
       generated.researchSources = Array.isArray(strategyContext.researchSources)
         ? strategyContext.researchSources
@@ -1250,6 +1480,9 @@ class YouTubeAutomationAgent {
     await this.db.saveProductionSnapshot(productionData);
     if (!this.provenance) this.provenance = new ProvenanceService(this.db);
     productionData.provenance = await this.provenance.initialize(contentId, productionData);
+    productionData.discoverability = this.discoverability
+      ? await this.discoverability.auditProduction(productionData, profile, 'youtube')
+      : null;
     this.logger.info(`Content saved with ID: ${contentId}`);
 
     // Step 6: Quality and approval gate

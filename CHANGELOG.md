@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## v2.10.0 — 2026-08-24
+
+- Added a versioned DarkzSEO discoverability preflight over a shell-free Python stdin/stdout adapter, with explicit unavailable and schema-mismatch states
+- Added durable discoverability audits and findings, reviewer keep/dismiss decisions with required false-positive reasons, and review evidence carry-forward across matching audits
+- Added an advisory Review Studio panel and API controls; discoverability findings never rewrite content or block publication in this release
+- Added a Controlled Growth Experiments Studio that turns approved-learning title and thumbnail variants into durable post-publication test plans
+- Added separate plan approval, live-start confirmation, bounded arm rotation, control restoration, and winner-adoption gates; no experiment can silently adopt a live change
+- Added real YouTube evidence samples for each arm using interval deltas for impressions, estimated clicks, CTR, views, watch time, retention, engagement, subscribers, and revenue
+- Added minimum-exposure, 95% evidence, retention-regression, and traffic-mix guardrails with an explicit inconclusive result when the evidence is weak or confounded
+- Added four-hour experiment refresh scheduling, restart-safe SQLite state, dashboard controls, read/mutation APIs, and approved-winner handoff into future channel planning
+- Added a structured channel-outcome contract with primary KPI, numeric target, measurement window, monthly production budget, and currency while retaining free-text outcome context
+- Added independent YouTube subscriber and monetization collection so unavailable revenue never converts otherwise-real analytics into simulated data or false zeroes
+- Extended real performance snapshots with net subscribers, watch hours, subscriber and revenue efficiency, known production cost, net revenue, and ROI evidence
+- Added an Outcome & ROI Studio dashboard with target progress, evidence coverage, channel economics, and pillar, format, and provider comparisons
+- Added approval-gated outcome-allocation recommendations; pending or rejected recommendations cannot change autonomous planning
+- Added `GET /api/outcomes`, structured strategy validation, content-pillar propagation, database migrations, and regression coverage for goal alignment and non-monetized channels
+- Established a platform-targeted audit contract for future TikTok and Instagram/Reels publishing and analytics adapters; those adapters are not included in v2.10.0
+
+## v2.9.0 — 2026-08-23
+
+- Added a persistent Audience Engagement Studio: tapered read-only comment sync for recent videos with a strict no-simulated-comments policy
+- Added AI comment classification into themes, sentiment, and flags, with spam/scam/toxic quarantine (flag-only; no moderation actions) and a weak non-AI fallback that never invents insights
+- Added approval-only reply drafting and posting with an explicit confirmation, a youtube.force-ssl re-consent gate, posting evidence, and a daily reply cap
+- Added audience-demand idea mining (3+ repeated asks) into the existing approval-gated recommendations pipeline, feeding approved requests into autonomous planning
+- Added an Engagement dashboard view, five /api/engagement endpoints, and a four-hour engagement sync automation slot
 - Added persistent scene-aware audience-retention snapshots using YouTube's granular elapsed-time curve, with separate long-form and Shorts evidence
 - Mapped retention points onto durable production scenes and classified scene-level drop-off, rewatch, strong-hold, and steady signals
 - Added an accessible dashboard retention curve, scene evidence cards, manual read-only refresh, and stored-evidence API
